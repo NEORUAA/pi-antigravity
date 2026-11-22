@@ -1,6 +1,6 @@
 # pi-antigravity
 
-> **Private independent derivative (NEORUAA).** Default consumer behavior now uses the pinned codex2api application profile, not the upstream CLI identity. Read [migration scope, limitations, deployment and test results](docs/CODEX_PARITY.md) first. This is not a lower-risk or official-client-equivalence guarantee. The upstream MIT attribution and history are retained.
+> **Public fork of Rahularya01/pi-antigravity (NEORUAA).** Default consumer behavior now uses the pinned codex2api application profile, not the upstream CLI identity. Read [migration scope, limitations, deployment and test results](docs/CODEX_PARITY.md) first. This is not a lower-risk or official-client-equivalence guarantee. The upstream MIT attribution and history are retained.
 
 [![npm version](https://img.shields.io/npm/v/pi-antigravity?logo=npm)](https://www.npmjs.com/package/pi-antigravity)
 [![npm downloads](https://img.shields.io/npm/dm/pi-antigravity?logo=npm)](https://www.npmjs.com/package/pi-antigravity)
@@ -39,15 +39,16 @@ Want to equip Pi with MCP, web access, subagents, and todos? Install [`pi-essent
 
 ## Install
 
-Install the reviewed private repository from its `main` branch:
+Install this public fork from its `main` branch:
 
 ```bash
 pi install git:github.com/NEORUAA/pi-antigravity
 ```
 
-Your own computer must already have Git access to the private repository. Do not
-install the public npm package when you intend to use these private changes.
-This repository is marked private and does not publish packages. Restart Pi after
+The GitHub repository is public; no private-repository Git permission is needed.
+Do not install the upstream npm package when you intend to use this fork.
+`package.json` retains `private: true` to prevent accidental npm publication;
+that package flag does not make the GitHub repository private. Restart Pi after
 installation; see the [rollout guide](docs/CODEX_PARITY.md#install--roll-out).
 
 ## Quick start

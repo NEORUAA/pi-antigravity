@@ -1,6 +1,7 @@
 # Antigravity consumer compatibility migration
 
-This is an **independent private derivative**, not a GitHub fork-network member.
+This is a **public native GitHub fork of Rahularya01/pi-antigravity**, in its
+fork network. The canonical repository is `NEORUAA/pi-antigravity`.
 It retains Pi provider registration, calls, streaming events and account commands.
 It does not turn Pi into codex2api's HTTP gateway.
 
@@ -13,7 +14,7 @@ Google credentials or real Google requests were used to implement/test this work
 - Pi baseline: Rahularya01/pi-antigravity
   [`67706dd5fcc0a710f69f89412a6867673c58a684`](https://github.com/Rahularya01/pi-antigravity/tree/67706dd5fcc0a710f69f89412a6867673c58a684).
   Full reachable baseline history (88 commits) and its Rahul Arya MIT `LICENSE`
-  are retained; the baseline is the independent repository's `main` branch.
+  are retained; the baseline remains an ancestor of this fork's `main` branch.
 - Reference: james-6-23/codex2api
   [`d8e1981f1cc13d0b00fb4d4354e9c8777392319e`](https://github.com/james-6-23/codex2api/tree/d8e1981f1cc13d0b00fb4d4354e9c8777392319e).
   Its [README declares MIT](https://github.com/james-6-23/codex2api/blob/d8e1981f1cc13d0b00fb4d4354e9c8777392319e/README.md#L597-L601),
@@ -203,13 +204,14 @@ replacement, forbidden/no-project retries, optional failures and concurrent remo
 
 ## Install / roll out
 
-1. The release target is `main` through [PR #1](https://github.com/NEORUAA/pi-antigravity/pull/1).
-   The ordinary merge preserves upstream history and all migration commits; the
-   PR records its canonical merge state. Review this matrix and the verification record.
-2. Install **this private repository** from `main`, not npm:pi-antigravity or
+1. Install this fork's `main`. Its history retains upstream Pi and migration
+   merge `7ed8fd7a530ffb5aac34aeec5976bb1b7becad82`, plus the public-fork
+   documentation update. The former independent private repository was replaced;
+   its PR/Actions records are not transferred. Review this matrix and verification record.
+2. Install **this public fork** from `main`, not npm:pi-antigravity or
    Rahularya01's public URL: `pi install git:github.com/NEORUAA/pi-antigravity`.
-   Git authentication for that private repository must already work on your own
-   computer. Alternatively clone it yourself, install its locked dependencies,
+   No private-repository Git authentication is needed. Alternatively clone it
+   yourself, install its locked dependencies,
    and use Pi's local-extension installation mechanism.
 3. Node >=22.19 and the existing Pi peer requirements still apply. Install with
    Corepack/Yarn and `yarn install --immutable`; lifecycle scripts remain off.
@@ -228,12 +230,13 @@ replacement, forbidden/no-project retries, optional failures and concurrent remo
    `ANTIGRAVITY_PROJECT_ID` supplies a caller-owned project;
    `ANTIGRAVITY_OAUTH_ENDPOINT_MODE=daily|sandbox|all` controls generation hosts.
    Leave overrides unset for the pinned reference defaults.
-7. Roll back by reverting this PR or selecting the baseline revision. The
+7. Roll back by reverting migration merge `7ed8fd7` or selecting the baseline revision. The
    explicit `ANTIGRAVITY_COMPAT_PROFILE=pi` switch restores the old Pi request/
    routing path, not a security guarantee. Never run both copies against one
    writable auth directory simultaneously.
 
-`package.json` is private to prevent accidental npm publication. The inherited
+`package.json` retains `private: true` to prevent accidental npm publication;
+this is separate from the GitHub repository, which is public. The inherited
 publish workflow is replaced by an inert notice; no release/tag/publish action
 is part of this migration.
 

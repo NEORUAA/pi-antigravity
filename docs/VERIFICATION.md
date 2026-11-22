@@ -4,7 +4,7 @@ Local final review: 2026-11-22 19:10 JST. Node v24.22.1, Yarn 4.18.0, Linux.
 
 No dependency lifecycle scripts, personal credential reads, Google logins,
 real Google upstream calls, live smoke scripts or account-risk tests were run.
-All stores and fixtures were isolated inside the private implementation checkout.
+All stores and fixtures were isolated inside local implementation checkouts.
 The runner overrides inherited OAuth configuration with synthetic client values.
 
 | Check                                                   | Actual result                                                                                                                   |
@@ -24,9 +24,10 @@ The runner overrides inherited OAuth configuration with synthetic client values.
 | Combined offline test command                           | **FAIL**, correctly returns nonzero for the baseline URL-reader failure below                                                   |
 
 The tested implementation ends at `9e730068137545288a327e3378048b1a14f7b8ee`;
-subsequent release-documentation edits do not change runtime code. Publication
-target: `main` through [PR #1](https://github.com/NEORUAA/pi-antigravity/pull/1),
-whose merge state and Git history are authoritative. One-shot Sync/gates and the
+subsequent release/public-fork documentation edits do not change runtime code.
+Publication target: the public native fork `NEORUAA/pi-antigravity`, branch `main`.
+Migration merge `7ed8fd7` and all implementation commits remain in its history.
+The old independent private repository's PR/Actions records are not migrated. One-shot Sync/gates and the
 previously missing pending-checkpoint/restart lifecycle are implemented. See [SOURCE_REVIEW.md](SOURCE_REVIEW.md) for the
 bounded final source trace and explicit Pi/platform adaptations. Passing offline
 fixtures do not establish live upstream behavior or lower account risk.
@@ -80,7 +81,7 @@ not TypeScript-generated expectations.
 
 ## Remote CI snapshot (first revision only)
 
-[Run 45004945823](https://github.com/NEORUAA/pi-antigravity/actions/runs/45004945823)
+Historical private-repository run `45004945823` (record not migrated)
 was read once; Node 22.19.0, 24 and 26 each failed only the same inherited
 scenarioLongFence test. Other legacy scripts and the original default consumer
 suite passed. This run covers `e04eac9`, not the later follow-up changes.
@@ -117,3 +118,18 @@ No remote retry or polling loop was started.
 Not tested: real consent/token issuance/model availability; official browser/TLS
 fingerprints; real quotas; cross-process file races; all arbitrary gateway
 payload/schema/prompt variants. See [the parity boundaries](CODEX_PARITY.md).
+
+## Public fork recreation
+
+The public native fork preserves the complete migration commit history, MIT
+license and pinned source provenance. Before publication every migration commit
+tree was scanned for credential-shaped values and private runtime paths; no
+personal credentials or runtime stores were found. Built-in public OAuth client
+configuration is not a user credential. Only committed source/docs/tests are
+pushed, never local caches. `package.json` remains `private: true` solely to
+prevent npm publication. Public-fork acceptance reruns the same offline suite;
+its inherited URL-reader failure remains a failure, not a suppressed green result.
+
+Public-fork local rerun: 2026-11-22 22:14 JST. All 32 command groups ran;
+only the unchanged baseline URL-reader script failed. Typecheck/lint/security
+and all five new suites passed. Runtime source is unchanged from `7ed8fd7`.

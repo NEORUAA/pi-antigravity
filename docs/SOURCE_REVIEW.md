@@ -1,9 +1,10 @@
 # Source review and migration
 
 Both source pins and licensing are recorded in [CODEX_PARITY.md](CODEX_PARITY.md).
-Delivery target: the private repository's `main` branch through
-[PR #1](https://github.com/NEORUAA/pi-antigravity/pull/1). The PR and Git history
-record the publication/merge state; this document records implementation evidence.
+Delivery target: the public native fork `NEORUAA/pi-antigravity`, branch `main`.
+Migration merge `7ed8fd7` and every implementation commit are retained. The former
+private repository's PR/Actions records are not migrated; this document and Git
+history preserve implementation evidence.
 
 ## Source-to-port trace
 
@@ -84,7 +85,8 @@ HTTP gateway envelopes, and the documented Node/Go transport/clock differences.
 
 ## Remote CI snapshot
 
-Read once, no polling: [run 45004945823](https://github.com/NEORUAA/pi-antigravity/actions/runs/45004945823).
+Historical snapshot from the replaced private repository: run `45004945823`
+(read once, no polling; Actions records are not migrated).
 Node 22.19.0, 24 and 26 all failed only the inherited `scripts/test-web-fetch.ts`
 scenarioLongFence check; the other 23 legacy scripts and the first default suite
 passed. That remote run covers **e04eac9**, not the later follow-up changes.
