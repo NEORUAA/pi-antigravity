@@ -1,3 +1,5 @@
+import { CODEX_USER_AGENT, legacyProfile, DAILY, PRODUCTION, SANDBOX } from "../compat/profile.js";
+import { provisionIdentity } from "../auth/control-plane.js";
 import { createHash } from "node:crypto";
 import {
   getCurrentAvailableModels,
@@ -19,6 +21,7 @@ export const DEFAULT_ENDPOINT = "https://daily-cloudcode-pa.googleapis.com";
 export const ENDPOINT_FALLBACKS = [DEFAULT_ENDPOINT, "https://cloudcode-pa.googleapis.com"];
 
 const PROJECT_CACHE_TTL_MS = 30 * 60 * 1000;
+const inFlightProjects = new Map<string, Promise<string | undefined>>();
 const projectCache = new Map<string, { projectId: string | undefined; expiresAt: number }>();
 
 const MODEL_CACHE_TTL_MS = 30 * 60 * 1000;
@@ -53,7 +56,21 @@ export const DEFAULT_PROJECT_ID = defaultProjectId();
 
 export function endpointCandidates(): string[] {
   const explicit = antigravityEnv("BASE_URL")?.trim();
-  return explicit ? [assertSafeApiBaseUrl(explicit)] : ENDPOINT_FALLBACKS;
+  if (explicit) return [assertSafeApiBaseUrl(explicit)];
+  if (legacyProfile()) return ENDPOINT_FALLBACKS;
+  switch (antigravityEnv("OAUTH_ENDPOINT_MODE")?.trim().toLowerCase()) {
+    case "daily":
+      return [DAILY];
+    case "sandbox":
+      return [SANDBOX];
+    case "all":
+    case "nonprod":
+    case "daily+sandbox":
+    case "sandbox+daily":
+      return [DAILY, PRODUCTION, SANDBOX];
+    default:
+      return [DAILY, PRODUCTION];
+  }
 }
 
 // Catalog visibility is gated on this version. 1.2.4 hides Gemini 4 Argon.
@@ -63,7 +80,7 @@ const DEFAULT_USER_AGENT =
 
 /** Default User-Agent matching pure Antigravity CLI wire fingerprint. */
 export function defaultUserAgent(): string {
-  return DEFAULT_USER_AGENT;
+  return legacyProfile() ? DEFAULT_USER_AGENT : CODEX_USER_AGENT;
 }
 
 /** HTTP headers for Antigravity API requests matching CLI wire traffic. */
@@ -580,6 +597,7 @@ export async function fetchAvailableModelsCatalog(
 }
 
 async function loadCodeAssistUncached(token: string): Promise<string | undefined> {
+  if (!legacyProfile()) return (await provisionIdentity(token)).projectId;
   const body = JSON.stringify({
     metadata: {
       ideType: "ANTIGRAVITY",
@@ -617,7 +635,12 @@ export async function loadCodeAssist(token: string): Promise<string | undefined>
     return cached.projectId;
   }
 
-  const projectId = await loadCodeAssistUncached(token);
+  let pending = inFlightProjects.get(token);
+  if (!pending) {
+    pending = loadCodeAssistUncached(token).finally(() => inFlightProjects.delete(token));
+    inFlightProjects.set(token, pending);
+  }
+  const projectId = await pending;
   projectCache.set(token, { projectId, expiresAt: Date.now() + PROJECT_CACHE_TTL_MS });
 
   // Evict oldest entry when the cache exceeds 32 entries (O(1) — Map preserves insertion order).

@@ -1,5 +1,7 @@
 # pi-antigravity
 
+> **Private independent derivative (NEORUAA).** Default consumer behavior now uses the pinned codex2api application profile, not the upstream CLI identity. Read [migration scope, limitations, deployment and test results](docs/CODEX_PARITY.md) first. This is not a lower-risk or official-client-equivalence guarantee. The upstream MIT attribution and history are retained.
+
 [![npm version](https://img.shields.io/npm/v/pi-antigravity?logo=npm)](https://www.npmjs.com/package/pi-antigravity)
 [![npm downloads](https://img.shields.io/npm/dm/pi-antigravity?logo=npm)](https://www.npmjs.com/package/pi-antigravity)
 [![license](https://img.shields.io/npm/l/pi-antigravity)](LICENSE)
@@ -37,21 +39,16 @@ Want to equip Pi with MCP, web access, subagents, and todos? Install [`pi-essent
 
 ## Install
 
-Install from npm:
+Install the reviewed private repository after merging its migration PR:
 
 ```bash
-pi install npm:pi-antigravity
+pi install git:github.com/NEORUAA/pi-antigravity
 ```
 
-Or install the latest repository version:
-
-```bash
-pi install git:github.com/Rahularya01/pi-antigravity
-```
-
-On Oh My Pi, install the same package with `omp plugin install npm:pi-antigravity`.
-
-Restart Pi (or run `/reload`) after installation. To update the npm package later, use `pi update npm:pi-antigravity`.
+Your own computer must already have Git access to the private repository. Do not
+install the public npm package when you intend to use these private changes.
+This repository is marked private and does not publish packages. Restart Pi after
+installation; see the [rollout guide](docs/CODEX_PARITY.md#install--roll-out).
 
 ## Quick start
 
@@ -80,7 +77,7 @@ On a hard quota wall (HTTP 429 with a reset hint), the provider automatically tr
 
 The provider uses the OAuth 2.0 Authorization Code flow with PKCE, so credentials are only ever exchanged with Google — never typed into Pi.
 
-1. `/login antigravity` opens Google sign-in and starts a temporary callback listener at `http://localhost:51121/oauth-callback`.
+1. `/login antigravity` opens Google sign-in and starts a temporary callback listener at `http://127.0.0.1:<ephemeral-port>/oauth-callback` (the `pi` compatibility profile retains port 51121).
 2. After you approve access, Pi exchanges the callback code for tokens and stores the provider credentials in Pi's auth store (normally `~/.pi/agent/auth.json`).
 3. Pi refreshes access tokens automatically when they expire — you shouldn't need to sign in again unless a token is revoked.
 4. Successful logins and token rotations are also kept in `~/.pi/agent/antigravity-accounts.json` with owner-only permissions so linked accounts can be switched without re-authenticating.
@@ -277,7 +274,7 @@ Provider requests reuse a keep-alive connection pool when the runtime supports i
 - **403 `VALIDATION_REQUIRED` / "Verify your account":** Open the `accounts.google.com` link in the error, in a browser signed in to the same Google account, and finish verification. Re-login alone does not clear it. `/antigravity.doctor` omits that link because it carries session parameters.
 - **Remote/headless machine — browser can't reach `localhost:51121`:** The callback binds to loopback only, so a browser on another machine can't hit it. You have two options:
   - **Paste (no extra setup):** Run `/login antigravity`, open the shown URL and complete Google sign-in in _any_ browser. When it redirects to `http://localhost:51121/oauth-callback?…` and fails to load, copy that full URL from the address bar and paste it into the prompt Pi shows. The code is single-use and expires quickly, so paste promptly.
-  - **SSH tunnel (reusable):** From the machine with the browser, run `ssh -N -L 51121:127.0.0.1:51121 <user>@<server>` and keep it open, then run `/login antigravity` on the server. The redirect to `localhost:51121` tunnels through to the local callback automatically.
+  - **SSH tunnel (legacy profile only; default users should paste the actual callback URL):** From the machine with the browser, run `ssh -N -L 51121:127.0.0.1:51121 <user>@<server>` and keep it open, then run `/login antigravity` on the server. The redirect to `localhost:51121` tunnels through to the local callback automatically.
 - **OAuth callback will not start:** Ensure port `51121` is free and `ANTIGRAVITY_CALLBACK_HOST` is a permitted loopback address.
 - **Model is unavailable:** Run `/antigravity.refresh`, then select a model from the updated list. Availability is account- and service-dependent; a generic resource-exhausted response alone does not prove a model was retired. Discovery uses the backend's recommended model list when supplied, since the raw catalog can retain old runtime IDs. If a resumed session selects a model removed by discovery, select another model; static routes and compatibility fallbacks do not restore models absent from the refreshed catalog.
 - **Claude/GPT tool-call schema error:** Upgrade to the latest package release. The provider adapts Pi's JSON Schema tool definitions for the Cloud Code Assist custom-tool bridge.

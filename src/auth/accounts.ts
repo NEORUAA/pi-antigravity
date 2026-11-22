@@ -1,11 +1,23 @@
-import { createHash } from "node:crypto";
-import { chmodSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import {
+  chmodSync,
+  existsSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+  mkdirSync,
+  openSync,
+  closeSync,
+  fsyncSync,
+  unlinkSync,
+} from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import type { OAuthCredentials } from "@earendil-works/pi-ai";
 import { defaultProjectId } from "../client/client.js";
 import type { AntigravityApiKey, AntigravityOAuthCredentials } from "../types/types.js";
-import { refreshAntigravityToken } from "./oauth.js";
+import { legacyProfile } from "../compat/profile.js";
+import { OAuthRefreshError, refreshAntigravityToken } from "./oauth.js";
 
 const ACCOUNTS_FILE = "antigravity-accounts.json";
 const AUTH_FILE = "auth.json";
@@ -15,6 +27,7 @@ export type StoredAccount = AntigravityOAuthCredentials & {
   accountId: string;
   addedAt: number;
   lastUsedAt: number;
+  health?: { blockedReason?: string; cooldowns?: Record<string, number> };
 };
 
 type AccountsFile = {
@@ -54,11 +67,21 @@ function readJsonObject(path: string): Record<string, unknown> | undefined {
 }
 
 function writePrivateJson(path: string, value: unknown): void {
-  const tempPath = `${path}.${process.pid}.tmp`;
-  writeFileSync(tempPath, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-  chmodSync(tempPath, 0o600);
-  renameSync(tempPath, path);
-  chmodSync(path, 0o600);
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const tempPath = `${path}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`;
+  const fd = openSync(tempPath, "wx", 0o600);
+  try {
+    writeFileSync(fd, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8" });
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+  try {
+    renameSync(tempPath, path);
+    chmodSync(path, 0o600);
+  } finally {
+    if (existsSync(tempPath)) unlinkSync(tempPath);
+  }
 }
 
 function emptyStore(): AccountsFile {
@@ -115,6 +138,7 @@ function accountFromCredentials(
 ): StoredAccount {
   const now = Date.now();
   return {
+    ...existing,
     ...credentials,
     accountId: existing?.accountId || accountIdFor(credentials),
     addedAt: existing?.addedAt || now,
@@ -177,6 +201,12 @@ function writeActiveCredential(account: StoredAccount | undefined): void {
       refresh: account.refresh,
       expires: account.expires,
       projectId: account.projectId,
+      identity: account.identity,
+      oauthClientKey: account.oauthClientKey,
+      oauthClientId: account.oauthClientId,
+      oauthClientSecret: account.oauthClientSecret,
+      idToken: account.idToken,
+      scope: account.scope,
     };
   } else {
     delete auth.antigravity;
@@ -190,6 +220,13 @@ function currentAuthCredentials(): AntigravityOAuthCredentials | undefined {
   const record = current as Record<string, unknown>;
   if (typeof record.refresh !== "string" || !record.refresh) return undefined;
   return {
+    identity: record.identity as AntigravityOAuthCredentials["identity"],
+    oauthClientKey: typeof record.oauthClientKey === "string" ? record.oauthClientKey : undefined,
+    oauthClientId: typeof record.oauthClientId === "string" ? record.oauthClientId : undefined,
+    oauthClientSecret:
+      typeof record.oauthClientSecret === "string" ? record.oauthClientSecret : undefined,
+    idToken: typeof record.idToken === "string" ? record.idToken : undefined,
+    scope: typeof record.scope === "string" ? record.scope : undefined,
     access: typeof record.access === "string" ? record.access : "",
     refresh: record.refresh,
     expires: typeof record.expires === "number" ? record.expires : 0,
@@ -203,6 +240,13 @@ export function syncCurrentAuth(): void {
   if (!credentials) return;
   const store = loadAccountStore();
   const existing = findAccount(store, credentials);
+  if (
+    !legacyProfile() &&
+    existing &&
+    existing.access !== credentials.access &&
+    existing.expires > credentials.expires
+  )
+    return;
   const account = accountFromCredentials(credentials, existing);
   store.accounts[account.accountId] = account;
   store.activeAccountId = account.accountId;
@@ -214,6 +258,7 @@ export function rememberAccount(credentials: AntigravityOAuthCredentials): Store
   const store = loadAccountStore();
   const existing = findAccount(store, credentials);
   const account = accountFromCredentials(credentials, existing);
+  account.health = {}; // Explicit fresh login clears permanent fences.
   store.accounts[account.accountId] = account;
   store.activeAccountId = account.accountId;
   saveAccountStore(store);
@@ -248,11 +293,17 @@ export function listAccounts(): AccountSummary[] {
 }
 
 async function ensureFresh(account: StoredAccount): Promise<StoredAccount> {
-  if (account.access && account.expires > Date.now() + REFRESH_SKEW_MS) return account;
+  if (!legacyProfile() && account.health?.blockedReason)
+    throw new Error(`Antigravity account needs re-login: ${account.health.blockedReason}`);
+  // expires already carries the SDK's five-minute lead; do not subtract it twice.
+  if (account.access && account.expires > Date.now() + (legacyProfile() ? REFRESH_SKEW_MS : 0))
+    return account;
   return accountFromCredentials(await refreshAntigravityToken(account), account);
 }
 
 function apiKeyFor(account: StoredAccount): AntigravityApiKey {
+  if (!legacyProfile() && !account.projectId)
+    throw new Error("Antigravity account has no provisioned project. Re-login required.");
   const email = account.email?.trim();
   return {
     token: account.access,
@@ -303,11 +354,13 @@ export async function removeAccount(selector: string): Promise<StoredAccount | u
  */
 export async function failoverToNextAccount(
   triedAccessTokens: ReadonlySet<string>,
+  model?: string,
 ): Promise<AntigravityApiKey | undefined> {
   syncCurrentAuth();
   const store = loadAccountStore();
   const candidates = sortedAccounts(store).filter(
-    (account) => !triedAccessTokens.has(account.access),
+    (account) =>
+      !triedAccessTokens.has(account.access) && (legacyProfile() || available(account, model)),
   );
   for (const candidate of candidates) {
     try {
@@ -319,9 +372,74 @@ export async function failoverToNextAccount(
       saveAccountStore(store);
       writeActiveCredential(account);
       return apiKeyFor(account);
-    } catch {
-      // Skip accounts whose refresh token is no longer valid.
+    } catch (error) {
+      if (error instanceof OAuthRefreshError && error.permanent) {
+        candidate.health = { ...candidate.health, blockedReason: "oauth_refresh_invalid" };
+        const latest = loadAccountStore();
+        latest.accounts[candidate.accountId] = candidate;
+        saveAccountStore(latest);
+      }
     }
   }
   return undefined;
+}
+
+function family(model: string): string {
+  return model.startsWith("gemini-")
+    ? model.includes("argon")
+      ? "gemini:argon"
+      : "gemini:shared"
+    : model;
+}
+function available(account: StoredAccount, model?: string): boolean {
+  if (account.health?.blockedReason) return false;
+  const cooldowns = account.health?.cooldowns;
+  return !model || Math.max(cooldowns?.[model] ?? 0, cooldowns?.[family(model)] ?? 0) <= Date.now();
+}
+export function accountAvailable(token: string, model: string): boolean {
+  const account = Object.values(loadAccountStore().accounts).find((item) => item.access === token);
+  return !account || available(account, model);
+}
+/** Monotonic per-model/family cooldowns; shared capacity never calls this. */
+export function markAccountHealth(
+  token: string,
+  model: string,
+  options: { block?: string; cooldownMs?: number },
+): void {
+  const store = loadAccountStore();
+  const account = Object.values(store.accounts).find((item) => item.access === token);
+  if (!account) return;
+  account.health ??= {};
+  if (options.block) account.health.blockedReason = options.block;
+  if (options.cooldownMs) {
+    account.health.cooldowns ??= {};
+    for (const key of [model, family(model)])
+      account.health.cooldowns[key] = Math.max(
+        account.health.cooldowns[key] ?? 0,
+        Date.now() + options.cooldownMs,
+      );
+  }
+  saveAccountStore(store);
+}
+/** One forced refresh after a 401, never export a different identity's old project. */
+export async function refreshAccountAfterUnauthorized(
+  token: string,
+): Promise<AntigravityApiKey | undefined> {
+  const store = loadAccountStore();
+  const previous = Object.values(store.accounts).find((item) => item.access === token);
+  if (!previous) return undefined;
+  try {
+    const updated = accountFromCredentials(await refreshAntigravityToken(previous), previous);
+    const latest = loadAccountStore();
+    // Do not resurrect an account removed while the refresh was in flight.
+    if (!latest.accounts[previous.accountId]) return undefined;
+    latest.accounts[previous.accountId] = updated;
+    saveAccountStore(latest);
+    if (latest.activeAccountId === previous.accountId) writeActiveCredential(updated);
+    return apiKeyFor(updated);
+  } catch (error) {
+    if (error instanceof OAuthRefreshError && error.permanent)
+      markAccountHealth(token, "", { block: "oauth_refresh_invalid" });
+    throw error;
+  }
 }

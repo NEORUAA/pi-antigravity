@@ -1,3 +1,7 @@
+import { resolveCodexModel, codexThinking } from "../compat/catalog.js";
+import { normalizeCodexRequest } from "../compat/request.js";
+import { legacyProfile, codexSessionId, codexRequestId } from "../compat/profile.js";
+import { executeCodexGeneration, GenerationHTTPError } from "../client/codex-transport.js";
 import {
   calculateCost,
   createAssistantMessageEventStream,
@@ -346,7 +350,7 @@ function convertMessagesWithMetadata(
 ): { contents: GeminiContent[]; hasDegradedToolObservations: boolean } {
   const contents: GeminiContent[] = [];
   let hasDegradedToolObservations = false;
-  const requiresSig = geminiRequiresThoughtSignature(runtimeModel);
+  const requiresSig = legacyProfile() && geminiRequiresThoughtSignature(runtimeModel);
   const droppedToolCallIds = new Map<string, string>();
   const droppedEmptyToolCalls = new Map<string, string[]>();
   for (const msg of context.messages) {
@@ -489,7 +493,8 @@ function convertMessagesWithMetadata(
               : {}),
           },
         };
-        appendTurn(contents, GeminiRole.User, [part, ...imageParts]);
+        if (!legacyProfile() && imageParts.length) part.functionResponse.parts = imageParts;
+        appendTurn(contents, GeminiRole.User, legacyProfile() ? [part, ...imageParts] : [part]);
       }
     }
   }
@@ -1080,7 +1085,7 @@ export function isInlineSystemEnabled(): boolean {
 export function shouldInlineSystem(systemParts: { text: string }[]): boolean {
   const preference = inlineSystemPreference();
   if (preference === "on") return true;
-  if (preference === "off") return false;
+  if (preference === "off" || !legacyProfile()) return false;
   const totalLength = systemParts.reduce((sum, part) => sum + part.text.length, 0);
   return totalLength > SYSTEM_INSTRUCTION_PART_LIMIT;
 }
@@ -1176,7 +1181,9 @@ export function buildRequest(
 
   const generationConfig: GeminiGenerationConfig = {};
   if (options.temperature !== undefined) generationConfig.temperature = options.temperature;
-  const thinking = getThinkingConfig(runtimeModel, options.reasoning ?? "off");
+  const thinking = legacyProfile()
+    ? getThinkingConfig(runtimeModel, options.reasoning ?? "off")
+    : codexThinking(model.id, runtimeModel, options.reasoning);
   if (thinking) generationConfig.thinkingConfig = thinking;
   const maxAllowed = getMaxOutputTokens(model.id, runtimeModel);
   if (options.maxTokens !== undefined) {
@@ -1187,7 +1194,10 @@ export function buildRequest(
   if (Object.keys(generationConfig).length) request.generationConfig = generationConfig;
 
   const isClaude = model.id.startsWith("claude-") || runtimeModel.startsWith("claude-");
-  const tools = convertTools(declaredTools, isClaude || model.id.startsWith("gpt-oss-"));
+  const tools = convertTools(
+    declaredTools,
+    legacyProfile() && (isClaude || model.id.startsWith("gpt-oss-")),
+  );
   if (tools) {
     request.tools = tools;
   }
@@ -1232,8 +1242,19 @@ export function buildRequest(
     trajectoryId,
     sessionId,
   });
-  request.sessionId = envelope.sessionId;
-  request.labels = envelope.labels;
+  request.sessionId = legacyProfile()
+    ? envelope.sessionId
+    : codexSessionId(request.contents, options.sessionId);
+  if (legacyProfile()) request.labels = envelope.labels;
+  if (!legacyProfile() && runtimeModel.startsWith("gemini-"))
+    delete request.generationConfig?.maxOutputTokens;
+  if (
+    !legacyProfile() &&
+    isClaude &&
+    request.toolConfig?.functionCallingConfig.mode === GeminiToolCallingMode.Any
+  ) {
+    delete request.toolConfig;
+  }
 
   const generateRequest: AntigravityGenerateRequest = {
     project: projectId,
@@ -1241,12 +1262,13 @@ export function buildRequest(
     request,
     requestType: AntigravityRequestType.Agent,
     userAgent: AntigravityUserAgent.Antigravity,
-    requestId: envelope.requestId,
+    requestId: legacyProfile() ? envelope.requestId : codexRequestId(),
   };
-  if (isCreditsEnabled()) {
+  if (isCreditsEnabled() && legacyProfile()) {
     generateRequest.enabledCreditTypes = ["GOOGLE_ONE_AI"];
   }
 
+  if (!legacyProfile()) normalizeCodexRequest(request, runtimeModel);
   return generateRequest;
 }
 
@@ -1645,6 +1667,7 @@ export async function streamResponse(
   stream: AssistantMessageEventStream,
   output: AssistantMessage,
   model?: Model<Api>,
+  reverseNames: Record<string, string> = {},
 ): Promise<boolean> {
   if (!response.body) throw new Error("No response body");
   const reader = response.body.getReader();
@@ -1665,6 +1688,8 @@ export async function streamResponse(
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith(":")) return;
     stray = stray ? `${stray}\n${trimmed}` : trimmed;
+    if (!legacyProfile() && Buffer.byteLength(stray) > 1024 * 1024)
+      throw new Error("Antigravity stray SSE error exceeds 1 MiB");
     const start = stray.indexOf("{");
     if (start < 0) return;
     let parsed: unknown;
@@ -1693,6 +1718,7 @@ export async function streamResponse(
     try {
       chunk = JSON.parse(json) as StreamChunk;
     } catch {
+      if (!legacyProfile()) throw new Error("Invalid Antigravity SSE JSON event");
       return;
     }
 
@@ -1755,7 +1781,7 @@ export async function streamResponse(
         const toolCall: ToolCall = {
           type: "toolCall",
           id: sanitizeToolCallId(rawId, part.functionCall.name),
-          name: part.functionCall.name || "",
+          name: reverseNames[part.functionCall.name || ""] || part.functionCall.name || "",
           arguments: asToolCallArguments(part.functionCall.args),
           ...(part.thoughtSignature ? { thoughtSignature: part.thoughtSignature } : {}),
         };
@@ -1829,27 +1855,53 @@ export async function streamResponse(
     currentBlock = null;
   };
 
-  while (true) {
-    const result = await reader.read();
-    if (result.done) break;
-    if (!(result.value instanceof Uint8Array)) continue;
-    buffer += decoder.decode(result.value, { stream: true });
-
-    let newlineIdx: number;
-    while ((newlineIdx = buffer.indexOf("\n", scanStart)) !== -1) {
-      const line = buffer.slice(scanStart, newlineIdx);
-      scanStart = newlineIdx + 1;
-      handleLine(line.replace(/\r$/, ""));
+  let eventLines: string[] = [];
+  let eventBytes = 0;
+  const acceptLine = (line: string) => {
+    if (legacyProfile()) {
+      handleLine(line);
+      return;
     }
-
-    if (scanStart > 0) {
-      buffer = buffer.slice(scanStart);
-      scanStart = 0;
+    if (!line) {
+      if (eventLines.length) handleLine(`data: ${eventLines.join("\n")}`);
+      eventLines = [];
+      eventBytes = 0;
+      return;
     }
+    if (line.startsWith("data:")) {
+      const data = line.slice(5).replace(/^ /, "");
+      eventBytes += Buffer.byteLength(data) + 1;
+      if (eventBytes > 8 * 1024 * 1024) throw new Error("Antigravity SSE event exceeds 8 MiB");
+      eventLines.push(data);
+    } else if (!line.startsWith(":") && !/^(event|id|retry):/.test(line)) consumeStray(line);
+  };
+  try {
+    while (true) {
+      const result = await reader.read();
+      if (result.done) break;
+      if (!(result.value instanceof Uint8Array)) continue;
+      buffer += decoder.decode(result.value, { stream: true });
+      if (!legacyProfile() && Buffer.byteLength(buffer) + eventBytes > 8 * 1024 * 1024)
+        throw new Error("Antigravity SSE event exceeds 8 MiB");
+      let newlineIdx: number;
+      while ((newlineIdx = buffer.indexOf("\n", scanStart)) !== -1) {
+        const line = buffer.slice(scanStart, newlineIdx);
+        scanStart = newlineIdx + 1;
+        acceptLine(line.replace(/\r$/, ""));
+      }
+      if (scanStart > 0) {
+        buffer = buffer.slice(scanStart);
+        scanStart = 0;
+      }
+    }
+    buffer += decoder.decode();
+    if (buffer.length > 0) acceptLine(buffer.replace(/\r$/, ""));
+    if (!legacyProfile()) acceptLine("");
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
   }
 
-  buffer += decoder.decode();
-  if (buffer.length > 0) handleLine(buffer.replace(/\r$/, ""));
   if (!sawFinishReason) {
     throw new Error(
       "Antigravity stream ended without a finish reason; the response was terminated before completion.",
@@ -1995,6 +2047,52 @@ export function streamAntigravity(
       let creds = parseApiKey(opts.apiKey);
       const triedAccessTokens = new Set<string>([creds.token]);
       const enterpriseTarget = resolveEnterpriseTarget();
+      if (!legacyProfile() && !enterpriseTarget) {
+        const runtime =
+          antigravityEnv("RUNTIME_MODEL")?.trim() ||
+          resolveCodexModel(model.id, opts.reasoning)?.wire ||
+          getAntigravityRequestModelId(model.id, opts.reasoning ?? "off");
+        setLastResolvedRuntimeModel(runtime);
+        let reverseNames: Record<string, string> = {};
+        const response = await executeCodexGeneration({
+          credentials: creds,
+          model: runtime,
+          signal: opts.signal,
+          build: async (project) => {
+            const payload = buildRequest(model, context, project, opts, runtime);
+            const rewritten = await opts.onPayload?.(payload, model);
+            const finalPayload = (
+              rewritten === undefined ? payload : rewritten
+            ) as AntigravityGenerateRequest;
+            // Preserve original names from Pi's declarations (buildRequest already normalizes names).
+            const originalTools = resolveCurrentTools(context) ?? [];
+            const originalShape = { ...finalPayload.request, tools: convertTools(originalTools) };
+            reverseNames = normalizeCodexRequest(originalShape, runtime);
+            normalizeCodexRequest(finalPayload.request, runtime);
+            return finalPayload;
+          },
+          send: (url, init) =>
+            fetchWithHeaderDeadline(
+              url,
+              init,
+              opts.signal,
+              streamHeaderTimeoutMs(),
+              streamStallTimeoutMs(),
+            ),
+        });
+        if (!(await streamResponse(response, stream, output, model, reverseNames)))
+          throw new Error("Antigravity API returned an empty response");
+        setLastLatencyMs(Date.now() - startTime);
+        if (output.stopReason === "error" || output.stopReason === "aborted") {
+          output.errorMessage ||= `Provider stopped with: ${output.rawStopReason || "unknown"}`;
+          stream.push({ type: "error", reason: output.stopReason, error: output });
+        } else if (output.stopReason === "pending")
+          throw new Error("Antigravity API returned no stop reason");
+        else stream.push({ type: "done", reason: output.stopReason, message: output });
+        stream.end();
+        return;
+      }
+
       const primaryEndpoint = enterpriseTarget?.host ?? endpointCandidates()[0];
       if (primaryEndpoint) prewarmConnection(primaryEndpoint);
       // Skip loadCodeAssist roundtrip when credentials already carry a projectId.
@@ -2380,7 +2478,10 @@ export function streamAntigravity(
     } catch (error) {
       setLastLatencyMs(Date.now() - startTime);
       output.stopReason = opts.signal?.aborted ? "aborted" : "error";
-      output.errorMessage = safeError(error);
+      output.errorMessage =
+        error instanceof GenerationHTTPError
+          ? friendlyAntigravityError(error.status, error.body)
+          : safeError(error);
       setLastError(output.errorMessage);
       // Ensure endpoint is recorded even if failure happened before setLastEndpoint.
       if (!getCurrentEndpoint() && endpointCandidates()[0]) {

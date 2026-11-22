@@ -1,3 +1,5 @@
+import { legacyProfile, profileUserAgent, abortableDelay } from "../compat/profile.js";
+import { provisionIdentity, readControlJSON } from "./control-plane.js";
 import { createHash, randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { fetch as oauthFetch } from "undici";
@@ -12,12 +14,13 @@ export const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 export const TOKEN_URL = "https://oauth2.googleapis.com/token";
 export const OAUTH_CALLBACK_TIMEOUT_MS = 5 * 60 * 1000;
 export const SCOPES = [
-  "https://www.googleapis.com/auth/aicode",
+  "openid",
   "https://www.googleapis.com/auth/cloud-platform",
   "https://www.googleapis.com/auth/userinfo.email",
   "https://www.googleapis.com/auth/userinfo.profile",
   "https://www.googleapis.com/auth/cclog",
   "https://www.googleapis.com/auth/experimentsandconfigs",
+  "https://www.googleapis.com/auth/aicode",
 ];
 
 /**
@@ -32,6 +35,26 @@ export const CLIENT_ID =
   );
 export const CLIENT_SECRET =
   antigravityEnv("CLIENT_SECRET") || atob("R09DU1BYLUs1OEZXUjQ" + "4NkxkTEoxbUxCOHNYQzR6NnFEQWY=");
+
+export type OAuthClientConfig = { key: string; id: string; secret: string };
+export function configuredOAuthClients(): OAuthClientConfig[] {
+  const configured = new Map<string, OAuthClientConfig>();
+  for (const entry of (antigravityEnv("OAUTH_CLIENTS") ?? "").split(";")) {
+    const [key, id, secret] = entry.split("|").map((part) => part.trim());
+    if (key && id && secret)
+      configured.set(key.toLowerCase(), { key: key.toLowerCase(), id, secret });
+  }
+  return configured.size
+    ? [...configured.values()]
+    : [{ key: "official", id: CLIENT_ID, secret: CLIENT_SECRET }];
+}
+function activeOAuthClient(): OAuthClientConfig {
+  const clients = configuredOAuthClients();
+  const key = antigravityEnv("OAUTH_CLIENT_KEY")?.trim().toLowerCase();
+  if (key && !clients.some((client) => client.key === key))
+    throw new Error("Configured Antigravity OAuth client key was not found");
+  return clients.find((client) => client.key === key) ?? clients[0];
+}
 
 export const CALLBACK_HOST = resolveCallbackHost();
 
@@ -73,17 +96,53 @@ function generatePKCE(): { verifier: string; challenge: string } {
   return { verifier, challenge };
 }
 
-async function getUserEmail(token: string): Promise<string | undefined> {
-  try {
-    const res = await oauthFetch("https://www.googleapis.com/oauth2/v1/userinfo?alt=json", {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!res.ok) return undefined;
-    const data = (await res.json()) as { email?: string };
-    return data.email;
-  } catch {
-    return undefined;
+export async function getUserProfile(
+  token: string,
+  signal?: AbortSignal,
+): Promise<{ email?: string }> {
+  const url = legacyProfile()
+    ? "https://www.googleapis.com/oauth2/v1/userinfo?alt=json"
+    : "https://www.googleapis.com/oauth2/v2/userinfo";
+  for (let attempt = 0; attempt < 3; attempt++) {
+    signal?.throwIfAborted();
+    if (attempt) await abortableDelay(200 * attempt, signal);
+    let res;
+    try {
+      res = await oauthFetch(url, {
+        headers: { Authorization: `Bearer ${token}`, "User-Agent": profileUserAgent() },
+        signal: signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(30_000)])
+          : AbortSignal.timeout(30_000),
+        redirect: "error",
+      });
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (legacyProfile()) return {};
+      // Match Go: retry only transient transport errors, never timeout/certificate failures.
+      const code = (error as { cause?: { code?: string }; name?: string }).cause?.code ?? "";
+      // Deliberately omit raw transport causes, which can contain credential-bearing URLs.
+      if (
+        attempt === 2 ||
+        /CERT|TLS|TIMEOUT|ALTNAME/i.test(code) ||
+        (error as Error).name === "TimeoutError"
+      )
+        // eslint-disable-next-line preserve-caught-error -- raw transport causes can contain credentials
+        throw new Error("Antigravity profile transport failed");
+      continue;
+    }
+    if (!res.ok) {
+      await res.body?.cancel();
+      if (legacyProfile()) return {};
+      throw new Error(`Antigravity profile HTTP ${res.status}`);
+    }
+    const data = await readControlJSON(res);
+    if (!data || typeof data !== "object") throw new Error("Invalid Google profile response");
+    const profile = data as { email?: string; verified_email?: boolean };
+    if (!legacyProfile() && (!profile.email?.trim() || profile.verified_email !== true))
+      throw new Error("Google profile did not confirm a verified email");
+    return { email: profile.email?.trim() };
   }
+  throw new Error("Antigravity profile unavailable");
 }
 
 function closeServerGracefully(server: Server): void {
@@ -93,7 +152,7 @@ function closeServerGracefully(server: Server): void {
   server.close();
 }
 
-function startCallbackServer(expectedState: string): Promise<CallbackServer> {
+export function startCallbackServer(expectedState: string): Promise<CallbackServer> {
   return new Promise((resolve, reject) => {
     let settled = false;
     let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -103,6 +162,7 @@ function startCallbackServer(expectedState: string): Promise<CallbackServer> {
       resolveCode = res;
       rejectCode = rej;
     });
+    void codePromise.catch(() => {});
 
     const finish = (fn: () => void) => {
       if (settled) return;
@@ -128,6 +188,12 @@ function startCallbackServer(expectedState: string): Promise<CallbackServer> {
       const error = url.searchParams.get("error");
       const code = url.searchParams.get("code");
       const state = url.searchParams.get("state");
+      if (state !== expectedState) {
+        res.writeHead(400, oauthCallbackHeaders());
+        res.end("Antigravity authentication failed: invalid state.");
+        finish(() => rejectCode(new Error("OAuth state mismatch")));
+        return;
+      }
       if (error) {
         const safe = escapeHtml(error.slice(0, 200));
         res.writeHead(400, oauthCallbackHeaders());
@@ -176,13 +242,21 @@ function startCallbackServer(expectedState: string): Promise<CallbackServer> {
       close();
     };
 
-    server.listen(51121, CALLBACK_HOST, () => {
-      timeout = setTimeout(() => {
-        finish(() => rejectCode(new Error("OAuth callback timed out waiting for browser login")));
-        close();
-      }, OAUTH_CALLBACK_TIMEOUT_MS);
-      resolve({ server, waitForCode: () => codePromise, cleanup });
-    });
+    server.listen(
+      legacyProfile() ? 51121 : 0,
+      legacyProfile() ? CALLBACK_HOST : "127.0.0.1",
+      () => {
+        timeout = setTimeout(() => {
+          finish(() => rejectCode(new Error("OAuth callback timed out waiting for browser login")));
+          close();
+        }, OAUTH_CALLBACK_TIMEOUT_MS);
+        const address = server.address();
+        const redirectUri = legacyProfile()
+          ? REDIRECT_URI
+          : `http://127.0.0.1:${typeof address === "object" && address ? address.port : 0}/oauth-callback`;
+        resolve({ server, redirectUri, waitForCode: () => codePromise, cleanup });
+      },
+    );
   });
 }
 
@@ -320,17 +394,19 @@ async function acquireAuthCode(
 export async function loginAntigravity(
   callbacks: OAuthLoginCallbacks,
 ): Promise<AntigravityOAuthCredentials> {
+  const client = activeOAuthClient();
   const { verifier, challenge } = generatePKCE();
   // State must be independent of the PKCE verifier so a leaked callback URL
   // cannot also disclose the code_verifier needed to mint tokens.
   const state = base64Url(randomBytes(32));
-  const { waitForCode, cleanup } = await startCallbackServer(state);
+  const { waitForCode, cleanup, redirectUri = REDIRECT_URI } = await startCallbackServer(state);
   try {
     const authParams = new URLSearchParams({
-      client_id: CLIENT_ID,
+      client_id: client.id,
       response_type: "code",
-      redirect_uri: REDIRECT_URI,
-      scope: SCOPES.join(" "),
+      redirect_uri: redirectUri,
+      scope: SCOPES.filter((scope) => !legacyProfile() || scope !== "openid").join(" "),
+      ...(!legacyProfile() ? { include_granted_scopes: "true" } : {}),
       code_challenge: challenge,
       code_challenge_method: "S256",
       state,
@@ -351,13 +427,20 @@ export async function loginAntigravity(
 
     const tokenResponse = await oauthFetch(TOKEN_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": profileUserAgent(),
+      },
+      signal: callbacks.signal
+        ? AbortSignal.any([callbacks.signal, AbortSignal.timeout(30_000)])
+        : AbortSignal.timeout(30_000),
+      redirect: "error",
       body: new URLSearchParams({
-        client_id: CLIENT_ID,
-        client_secret: CLIENT_SECRET,
+        client_id: client.id,
+        client_secret: client.secret,
         code,
         grant_type: "authorization_code",
-        redirect_uri: REDIRECT_URI,
+        redirect_uri: redirectUri,
         code_verifier: verifier,
       }).toString(),
     });
@@ -366,76 +449,185 @@ export async function loginAntigravity(
         `Token exchange failed: ${sanitizeOAuthProviderError(await tokenResponse.text())}`,
       );
     }
-    const tokenData = (await tokenResponse.json()) as {
+    const tokenData = (await readControlJSON(tokenResponse)) as {
       access_token: string;
       refresh_token?: string;
       expires_in: number;
     };
+    if (
+      typeof tokenData.access_token !== "string" ||
+      !tokenData.access_token.trim() ||
+      !Number.isFinite(tokenData.expires_in) ||
+      tokenData.expires_in <= 0
+    )
+      throw new Error("OAuth server returned an invalid access token or expiry");
     if (!tokenData.refresh_token) {
       throw new Error(
         "No refresh token received. Re-run /login antigravity and allow offline access.",
       );
     }
 
-    const [email, discoveredProject] = await Promise.all([
-      getUserEmail(tokenData.access_token),
-      loadCodeAssist(tokenData.access_token),
-    ]);
+    const { email } = await getUserProfile(tokenData.access_token, callbacks.signal);
+    const identity = legacyProfile()
+      ? undefined
+      : await provisionIdentity(tokenData.access_token, { signal: callbacks.signal });
+    const discoveredProject = identity?.projectId ?? (await loadCodeAssist(tokenData.access_token));
     return {
       refresh: tokenData.refresh_token,
       access: tokenData.access_token,
       expires: Date.now() + tokenData.expires_in * 1000 - 5 * 60 * 1000,
       projectId: discoveredProject || defaultProjectId(email || "antigravity-default"),
       email,
+      identity,
+      oauthClientKey: client.key,
+      oauthClientId: client.id,
+      oauthClientSecret: client.secret,
     };
   } finally {
     cleanup();
   }
 }
 
-export async function refreshAntigravityToken(
+export class OAuthRefreshError extends Error {
+  readonly permanent: boolean;
+  constructor(message: string, permanent: boolean) {
+    super(message);
+    this.permanent = permanent;
+  }
+}
+const refreshing = new Map<string, Promise<AntigravityOAuthCredentials>>();
+export function refreshAntigravityToken(
   credentials: OAuthCredentials,
 ): Promise<AntigravityOAuthCredentials> {
-  // SDK hosts may use Node 26 built-in fetch with a separate Undici dispatcher.
-  // Use Undici's fetch to keep response decompression on the same implementation.
-  const response = await oauthFetch(TOKEN_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: CLIENT_ID,
-      client_secret: CLIENT_SECRET,
-      refresh_token: credentials.refresh,
-      grant_type: "refresh_token",
-    }).toString(),
-  });
-  if (!response.ok) {
-    throw new Error(
-      `Antigravity token refresh failed: ${sanitizeOAuthProviderError(await response.text())}`,
-    );
+  const stored = credentials as AntigravityOAuthCredentials;
+  const key = createHash("sha256")
+    .update(
+      `${credentials.refresh}\0${stored.oauthClientId ?? CLIENT_ID}\0${stored.oauthClientSecret ?? CLIENT_SECRET}`,
+    )
+    .digest("hex");
+  let pending = refreshing.get(key);
+  if (!pending) {
+    pending = refreshTokenUncached(credentials).finally(() => refreshing.delete(key));
+    refreshing.set(key, pending);
   }
-  const data = (await response.json()) as {
-    access_token: string;
-    expires_in: number;
-    refresh_token?: string;
-  };
-  // Every refresh mints a brand-new access token, so loadCodeAssist's token-keyed cache
-  // can never hit here — skip the extra round-trip entirely when we already know the
-  // project id (the normal case; it's set at login and doesn't change token to token).
-  const existingProjectId = credentialProjectId(credentials);
-  const discoveredProject = existingProjectId ? undefined : await loadCodeAssist(data.access_token);
-  const email = credentialEmail(credentials);
-  return {
-    ...credentials,
-    refresh: data.refresh_token || credentials.refresh,
-    access: data.access_token,
-    expires: Date.now() + data.expires_in * 1000 - 5 * 60 * 1000,
-    projectId:
-      existingProjectId || discoveredProject || defaultProjectId(email || "antigravity-default"),
-  };
+  return pending;
+}
+async function refreshTokenUncached(
+  credentials: OAuthCredentials,
+): Promise<AntigravityOAuthCredentials> {
+  if (!credentials.refresh?.trim())
+    throw new OAuthRefreshError("Antigravity refresh token is required", true);
+  const stored = credentials as AntigravityOAuthCredentials;
+  const officialId = atob(
+    "MTA3MTAwNjA2MDU5MS10bWhzc2luMmgyMWxjcmUyMzV2dG9sb2poNGc0MDNlcC5hcHBzLmdvb2dsZXVzZXJjb250ZW50LmNvbQ==",
+  );
+  const officialSecret = atob("R09DU1BYLUs1OEZXUjQ4NkxkTEoxbUxCOHNYQzR6NnFEQWY=");
+  const configured = configuredOAuthClients();
+  const active = activeOAuthClient();
+  const candidates = [
+    ...(stored.oauthClientId && stored.oauthClientSecret
+      ? [
+          {
+            key: stored.oauthClientKey || stored.oauthClientId.toLowerCase(),
+            id: stored.oauthClientId,
+            secret: stored.oauthClientSecret,
+          },
+        ]
+      : []),
+    ...configured.filter((client) => client.key === stored.oauthClientKey),
+    active,
+    ...configured,
+    ...(!legacyProfile() ? [{ key: "official", id: officialId, secret: officialSecret }] : []),
+  ].filter(
+    (candidate, index, all) => all.findIndex((item) => item.key === candidate.key) === index,
+  );
+
+  let allPermanent = true;
+  let message = "Antigravity refresh failed";
+  for (const candidate of candidates) {
+    let response;
+    try {
+      response = await oauthFetch(TOKEN_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "User-Agent": profileUserAgent(),
+        },
+        body: new URLSearchParams({
+          client_id: candidate.id,
+          client_secret: candidate.secret,
+          refresh_token: credentials.refresh,
+          grant_type: "refresh_token",
+        }).toString(),
+        signal: AbortSignal.timeout(30_000),
+        redirect: "error",
+      });
+    } catch {
+      throw new OAuthRefreshError("Antigravity refresh transport failed", false);
+    }
+    if (!response.ok) {
+      const data = await readControlJSON(response);
+      const code =
+        typeof data === "object" && data && "error" in data && typeof data.error === "string"
+          ? data.error
+          : "unknown_oauth_error";
+      const permanent =
+        response.status >= 400 &&
+        response.status < 500 &&
+        ["invalid_grant", "invalid_client", "unauthorized_client", "access_denied"].includes(code);
+      allPermanent &&= permanent;
+      message = `Antigravity token refresh failed: ${code.replace(/[^a-z_]/gi, "").slice(0, 60)} (HTTP ${response.status})`;
+      if (
+        response.status === 400 ||
+        response.status === 401 ||
+        code === "unauthorized_client" ||
+        code === "invalid_client"
+      )
+        continue;
+      break;
+    }
+    const data = (await readControlJSON(response)) as {
+      access_token?: string;
+      refresh_token?: string;
+      expires_in?: number;
+      id_token?: string;
+      scope?: string;
+    };
+    if (!data.access_token?.trim() || !Number.isFinite(data.expires_in) || data.expires_in! <= 0)
+      throw new OAuthRefreshError("OAuth server returned an invalid access token or expiry", false);
+    const profile = legacyProfile()
+      ? { email: credentialEmail(credentials) }
+      : await getUserProfile(data.access_token);
+    // Never carry identity-bound snapshots across a refresh without revalidation.
+    const identity = legacyProfile() ? undefined : await provisionIdentity(data.access_token);
+    const discoveredProject =
+      identity?.projectId ??
+      credentialProjectId(credentials) ??
+      (await loadCodeAssist(data.access_token));
+    if (!discoveredProject && !legacyProfile())
+      throw new Error("Antigravity has no provisioned project");
+    return {
+      ...credentials,
+      refresh: data.refresh_token?.trim() || credentials.refresh,
+      access: data.access_token.trim(),
+      expires: Date.now() + data.expires_in! * 1000 - 5 * 60 * 1000,
+      projectId: discoveredProject || defaultProjectId(profile.email || "antigravity-default"),
+      email: profile.email,
+      identity,
+      oauthClientKey: candidate.key,
+      oauthClientId: candidate.id,
+      oauthClientSecret: candidate.secret,
+      idToken: data.id_token,
+      scope: data.scope || stored.scope,
+    };
+  }
+  throw new OAuthRefreshError(message, allPermanent);
 }
 
 export function getApiKey(credentials: OAuthCredentials): string {
   const email = credentialEmail(credentials);
+  if (!legacyProfile() && !credentialProjectId(credentials))
+    throw new Error("Antigravity has no provisioned project. Run /login antigravity.");
   return JSON.stringify({
     token: credentials.access,
     projectId: credentialProjectId(credentials) || defaultProjectId(email || "antigravity-default"),

@@ -1,3 +1,4 @@
+import { OAuthRefreshError, markAccountHealth } from "./auth/index.js";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import {
   ANTIGRAVITY_IMAGE_API,
@@ -89,9 +90,15 @@ async function loginAndRemember(
 async function refreshAndRemember(
   credentials: Parameters<typeof refreshAntigravityToken>[0],
 ): ReturnType<typeof refreshAntigravityToken> {
-  const refreshed = await refreshAntigravityToken(credentials);
-  updateRememberedAccount(credentials, refreshed);
-  return refreshed;
+  try {
+    const refreshed = await refreshAntigravityToken(credentials);
+    updateRememberedAccount(credentials, refreshed);
+    return refreshed;
+  } catch (error) {
+    if (error instanceof OAuthRefreshError && error.permanent)
+      markAccountHealth(credentials.access, "", { block: "oauth_refresh_invalid" });
+    throw error;
+  }
 }
 
 async function withUsage(
