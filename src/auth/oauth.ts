@@ -277,11 +277,15 @@ function credentialEmail(credentials: OAuthCredentials): string | undefined {
  * mirror the local callback server so a pasted URL is accepted under the exact
  * same rules as a same-machine browser redirect.
  */
-function parsePastedCallback(raw: string, expectedState: string): { code: string; state: string } {
+function parsePastedCallback(
+  raw: string,
+  expectedState: string,
+  redirectUri: string,
+): { code: string; state: string } {
   const text = (raw ?? "").trim();
   if (!text) {
     throw new Error(
-      "No callback pasted. Paste the full URL from your browser's address bar (http://localhost:51121/oauth-callback?…).",
+      `No callback pasted. Paste the full URL from your browser's address bar (${redirectUri}?…).`,
     );
   }
   let url: URL;
@@ -290,7 +294,7 @@ function parsePastedCallback(raw: string, expectedState: string): { code: string
   } catch {
     // Bare query string: "state=…&code=…" or "?state=…&code=…"
     const qs = text.startsWith("?") ? text.slice(1) : text;
-    url = new URL(`http://localhost:51121/oauth-callback?${qs}`);
+    url = new URL(`${redirectUri}?${qs}`);
   }
   const error = url.searchParams.get("error");
   if (error) throw new Error(`OAuth error from browser: ${error.slice(0, 200)}`);
@@ -298,7 +302,7 @@ function parsePastedCallback(raw: string, expectedState: string): { code: string
   const state = url.searchParams.get("state");
   if (!code || !state) {
     throw new Error(
-      "Pasted text is missing 'code' or 'state'. Paste the FULL callback URL from your browser's address bar (http://localhost:51121/oauth-callback?…).",
+      `Pasted text is missing 'code' or 'state'. Paste the FULL callback URL from your browser's address bar (${redirectUri}?…).`,
     );
   }
   if (state !== expectedState) {
@@ -320,9 +324,10 @@ async function acquireAuthCode(
   opts: {
     waitForCode: () => Promise<{ code: string; state: string }>;
     callbacks: OAuthLoginCallbacks;
+    redirectUri: string;
   },
 ): Promise<{ code: string; state: string }> {
-  const { waitForCode, callbacks } = opts;
+  const { waitForCode, callbacks, redirectUri } = opts;
   // Signals the losing candidate(s) to stop once the race settles.
   const settle = new AbortController();
   const candidates: Promise<{ code: string; state: string }>[] = [waitForCode()];
@@ -331,7 +336,7 @@ async function acquireAuthCode(
   if (typeof callbacks.onPrompt === "function") {
     const promptLoop = async (): Promise<{ code: string; state: string }> => {
       let promptMessage =
-        "Remote/headless machine (your browser can't reach localhost:51121)? " +
+        `Remote/headless machine (your browser can't reach ${new URL(redirectUri).host})? ` +
         "After signing in, paste the full callback URL shown in your browser's address bar.";
       while (true) {
         if (callbacks.signal?.aborted || settle.signal.aborted) {
@@ -341,7 +346,7 @@ async function acquireAuthCode(
         try {
           text = await callbacks.onPrompt({
             message: promptMessage,
-            placeholder: "http://localhost:51121/oauth-callback?state=…&code=…",
+            placeholder: `${redirectUri}?state=…&code=…`,
           });
         } catch (err: unknown) {
           // Prompt/transport failure — propagate, do not retry.
@@ -351,7 +356,7 @@ async function acquireAuthCode(
           throw new Error("Login cancelled");
         }
         try {
-          return parsePastedCallback(text, expectedState);
+          return parsePastedCallback(text, expectedState, redirectUri);
         } catch (err: unknown) {
           if (callbacks.signal?.aborted || settle.signal.aborted) {
             throw new Error("Login cancelled", { cause: err });
@@ -422,6 +427,7 @@ export async function loginAntigravity(
     const { code, state: returnedState } = await acquireAuthCode(state, {
       waitForCode,
       callbacks,
+      redirectUri,
     });
     if (returnedState !== state) throw new Error("OAuth state mismatch");
 

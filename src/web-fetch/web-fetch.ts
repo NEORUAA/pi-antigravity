@@ -1,3 +1,6 @@
+import { legacyProfile } from "../compat/profile.js";
+import { consumerFetch } from "../client/consumer-fetch.js";
+import { observeConsumerFailure } from "../client/codex-transport.js";
 /**
  * Read a public page through Google's Antigravity fetch service.
  *
@@ -288,14 +291,21 @@ async function postJson(
   signal?: AbortSignal,
 ): Promise<JsonPost> {
   setLastEndpoint(endpoint);
-  const response = await antigravityFetch(`${endpoint}${path}`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-    signal,
-  });
+  const response = await (legacyProfile() ? antigravityFetch : consumerFetch)(
+    `${endpoint}${path}`,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal,
+    },
+  );
   setLastStatus(response.status);
   const text = await readResponseText(response);
+  if (!legacyProfile() && !response.ok) {
+    const token = (headers.Authorization ?? headers.authorization ?? "").replace(/^Bearer /, "");
+    observeConsumerFailure(token, "web-fetch", response.status, text, response.headers);
+  }
   let data: unknown;
   try {
     data = text ? JSON.parse(text) : undefined;

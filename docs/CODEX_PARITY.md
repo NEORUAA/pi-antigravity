@@ -25,7 +25,9 @@ Google credentials or real Google requests were used to implement/test this work
   `auth/antigravity_client.go`, `proxy/antigravity_responses.go`,
   `proxy/antigravity_quota.go`, `proxy/antigravity_models.go`,
   `proxy/antigravity_function_names.go`, `proxy/antigravity_schema.go`, and
-  `proxy/antigravity_gemini.go`. Existing notices in the Pi base are retained.
+  `proxy/antigravity_gemini.go`, `proxy/antigravity_gemini_schema.go`,
+  `proxy/antigravity_schema_refs.go`, `proxy/client_scaffolding.go`, and
+  `proxy/antigravity_stream_errors.go`. Existing notices in the Pi base are retained.
   Consult the reference's rights holder before externally redistributing if the
   absent root license text creates a compliance concern.
 
@@ -36,67 +38,118 @@ old Pi routing/request path for regression comparison; it is not a risk-reductio
 mode. `ANTIGRAVITY_LOCATION` enterprise routing remains the existing Pi adapter,
 not a clone of the reference's consumer OAuth gateway.
 
-| Area             | Implemented behavior                                                                                                                                                                                                                                             | Offline evidence                                                                      |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| OAuth            | Auth code, independent state + S256 PKCE; `openid`, offline, consent, include_granted_scopes; ephemeral IPv4 loopback callback; manual paste and cancellation retained                                                                                           | Browser redirect simulated against a real local callback listener; denial/state tests |
-| Client identity  | `antigravity/hub/2.19.1 windows/amd64` on token/profile/control/generation requests; one override; body userAgent remains `antigravity`                                                                                                                          | Header/payload fixtures                                                               |
-| OAuth clients    | Existing direct CLIENT_ID/SECRET plus semicolon-separated `OAUTH_CLIENTS=key\|id\|secret` and `OAUTH_CLIENT_KEY`; stored tuple preferred during refresh, configured alternatives, built-in fallback on client-compatible errors                                  | Token endpoint MockAgent tests; no real credentials                                   |
-| Refresh          | In-process single-flight; rotated refresh retained; stale ID token cleared; structured permanent errors; no retry storm on transport/5xx; profile and project rebuilt for newly minted access token                                                              | Concurrent refresh, invalid_grant vs transient, forced 401 refresh                    |
-| Identity         | `/oauth2/v2/userinfo`, verified email required, bounded profile/control reads                                                                                                                                                                                    | Verified/unverified synthetic profiles                                                |
-| Project          | loadCodeAssist production → sandbox → daily on 429/5xx; no listCloudAICompanionProjects or generated project on default login                                                                                                                                    | Payload/order/failure tests                                                           |
-| Onboarding       | Default allowed tier → current tier → free-tier; daily → production; platform/plugin metadata; gl-node header; five calls/host with 2s waits; string/object project IDs; caller-owned enterprise project                                                         | Pending/done, fallback, exhaustion and tier fixtures                                  |
-| Generation       | Daily → production; sandbox explicit-only; no anonymous prewarm; same serialized request and session on endpoint retry; opt-in x-goog-user-project removed once after 403                                                                                        | Transport/408/404/5xx and header tests                                                |
-| Models/thinking  | 44 pinned fixed/logical definitions; fixed tier wins; Argon shared high backing; named Gemini thinking levels and numeric older budgets; retired/disabled IDs rejected                                                                                           | Catalog/tier tests; existing Pi model tests in legacy profile                         |
-| Request envelope | agent/milliseconds/8-hex request ID; negative 63-bit big-endian SHA session; Pi sessionId maps to metadata.session_id seed; no invented CLI trajectory labels; native long systemInstruction; no Gemini maxOutputTokens                                          | Hash/envelope fixtures                                                                |
-| Tools/multimodal | Existing Pi transcript conversion; JSON-schema normalization, local dereferencing, union cleanup, enum hints, empty reason schema, deterministic name collisions and name restoration, Gemini replay signature stub, image results inside functionResponse.parts | Original adapter suite + new replay/schema tests                                      |
-| Retry/health     | Structured ErrorInfo/RetryInfo; 8 capacity waits shared across endpoints, 2 instant waits below 3s; capacity does not churn accounts; monotonic per-model/Gemini-family cooldowns; Argon isolation; validation/TOS and permanent refresh fences                  | Budget, quota failover, finite exhaustion, private file permissions                   |
-| 401              | One forced refresh for a remembered token; rebuilt project; second 401 terminal                                                                                                                                                                                  | Token/profile mocks and two-request assertions                                        |
-| Streaming        | Header/stall deadlines retained; UTF-8 SSE multiline events, bounded frame/error reads, strict malformed/terminal checks, reader cancellation; no internal retry after streaming begins                                                                          | Existing deadline/SSE tests plus default multiline/truncation/no-replay cases         |
-| Persistence      | Random exclusive 0600 temporary file, fsync, atomic rename, 0700 newly-created directory; coherent OAuth metadata; stale auth snapshot protection                                                                                                                | Synthetic isolated stores; original account tests                                     |
+| Area             | Implemented behavior                                                                                                                                                                                                                                                                                                                                               | Offline evidence                                                                      |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
+| OAuth            | Auth code, independent state + S256 PKCE; `openid`, offline, consent, include_granted_scopes; ephemeral IPv4 loopback callback; manual paste and cancellation retained                                                                                                                                                                                             | Browser redirect simulated against a real local callback listener; denial/state tests |
+| Client identity  | `antigravity/hub/2.19.1 windows/amd64` on token/profile/control/generation requests; one override; body userAgent remains `antigravity`                                                                                                                                                                                                                            | Header/payload fixtures                                                               |
+| OAuth clients    | Existing direct CLIENT_ID/SECRET plus semicolon-separated `OAUTH_CLIENTS=key\|id\|secret` and `OAUTH_CLIENT_KEY`; stored tuple preferred during refresh, configured alternatives, built-in fallback on client-compatible errors                                                                                                                                    | Token endpoint MockAgent tests; no real credentials                                   |
+| Refresh          | In-process single-flight; rotated refresh retained; stale ID token cleared; structured permanent errors; no retry storm on transport/5xx; profile and project rebuilt for newly minted access token                                                                                                                                                                | Concurrent refresh, invalid_grant vs transient, forced 401 refresh                    |
+| Identity         | `/oauth2/v2/userinfo`, verified email required, bounded profile/control reads                                                                                                                                                                                                                                                                                      | Verified/unverified synthetic profiles                                                |
+| Project          | loadCodeAssist production → sandbox → daily on 429/5xx; no listCloudAICompanionProjects or generated project on default login                                                                                                                                                                                                                                      | Payload/order/failure tests                                                           |
+| Onboarding       | Default allowed tier → current tier → free-tier; daily → production; platform/plugin metadata; gl-node header; five calls/host with 2s waits; string/object project IDs; caller-owned enterprise project                                                                                                                                                           | Pending/done, fallback, exhaustion and tier fixtures                                  |
+| Generation       | Daily → production; sandbox explicit-only; no anonymous prewarm; same serialized request and session on endpoint retry; opt-in x-goog-user-project removed once after 403                                                                                                                                                                                          | Transport/408/404/5xx and header tests                                                |
+| Models/thinking  | 44 pinned fixed/logical definitions; fixed tier wins; Argon shared high backing; named Gemini thinking levels and numeric older budgets; retired/disabled IDs rejected                                                                                                                                                                                             | Catalog/tier tests; existing Pi model tests in legacy profile                         |
+| Request envelope | agent/milliseconds/8-hex request ID; negative 63-bit big-endian SHA session; Pi sessionId maps to metadata.session_id seed; no invented CLI trajectory labels; native long systemInstruction; no Gemini maxOutputTokens                                                                                                                                            | Hash/envelope fixtures                                                                |
+| Tools/multimodal | Existing Pi transcript conversion; JSON-schema normalization, local dereferencing, union cleanup, enum hints, empty reason schema, deterministic name collisions and name restoration, Gemini replay signature stub, image results inside functionResponse.parts                                                                                                   | Original adapter suite + new replay/schema tests                                      |
+| Retry/health     | Structured ErrorInfo/RetryInfo; 8 capacity waits shared across endpoints, 2 instant waits below 3s; capacity has a 10s model cooldown without immediate account rotation; named rate limits 30s, bare RESOURCE_EXHAUSTED 5s; only quota exhaustion cools a Gemini family; monotonic shared cooldowns; Argon isolation; validation/TOS and permanent refresh fences | Budget, quota failover, finite exhaustion, private file permissions                   |
+| 401              | One forced refresh for a remembered token; rebuilt project; second 401 terminal                                                                                                                                                                                                                                                                                    | Token/profile mocks and two-request assertions                                        |
+| Streaming        | Header/stall deadlines retained; UTF-8 SSE multiline events, bounded frame/error reads, strict malformed/terminal checks, reader cancellation; no internal retry after streaming begins                                                                                                                                                                            | Existing deadline/SSE tests plus default multiline/truncation/no-replay cases         |
+| Persistence      | Random exclusive 0600 temporary file, fsync, atomic rename, 0700 newly-created directory; coherent OAuth metadata; stale auth snapshot protection                                                                                                                                                                                                                  | Synthetic isolated stores; original account tests                                     |
 
 All contract fixtures are synthetic and describe the pinned source, **not an
 observed capture of official AGY**. The 44 definitions are a snapshot, not a claim
 that Google currently makes any named model available to this account.
 
-## Deliberate differences and remaining parity gaps
+## Local second review (not published yet)
 
-This is a substantial **consumer main-chain port**, not a claim that every
-codex2api behavior has been cloned:
+The first PR revision did not implement several application behaviors. The local
+second revision now adds:
+
+- The reference's system/conversation/product-scaffolding normalization, three-pass
+  phrase obfuscation, fenced/inline code masking, reminder switches, 1MiB byte
+  budget and native tool-result recursion. Session hashing occurs **after** this
+  normalization; no unrelated fallback persona is added when Pi supplies none.
+- Malformed schema repair, local JSON Pointer expansion/cycle hints, source union
+  selection/merge, required cleanup, enum descriptions and empty-tool placeholder.
+  Native response JSON schemas use their **separate** cleaner (not tool placeholders).
+- Shared HTTP/SSE health handling for validation/TOS fences and quota/rate/capacity
+  cooldowns; sanitized status/kind/model outcome persistence (no raw error bodies);
+  string/numeric/RPC error status inference; multiline, unprefixed,
+  bare and array-wrapped error envelopes. No consumed stream is internally replayed.
+  Safety/failed-finish frames are checked before emitting their text/tool calls.
+- Shared consumer pool, header/body deadlines, identity/request/session envelope and
+  dispatch for search and image generation. Image body errors cannot silently select
+  another model. URL-reader RPCs retain Pi's crawler contract but share UA/pool,
+  deadlines and terminal-error health observation.
+- Default pinned model registration without automatic live catalog probes. Explicit
+  `/antigravity.refresh` still queries; automatic discovery requires
+  `ANTIGRAVITY_DYNAMIC_DISCOVERY=1`. Citation redirect/title enrichment requires
+  `ANTIGRAVITY_SOURCE_ENRICH=1`; public citations never receive bearer headers.
+  Anonymous prewarm stays disabled. Existing **explicit** Pi credit-overage opt-in
+  remains supported; it is a Pi extension, not a claim about codex2api defaults.
+- Refresh saves re-read live account state, preserve concurrent health writes and
+  do not resurrect deleted accounts. Tool names are normalized once after Pi's
+  payload hook, including non-function native tools and collision restoration.
+
+### Independent source evidence and intentional Pi adaptation
+
+`reference.json` contains **714 source-derived vectors**, generated by a
+standard-library-only development Go oracle from the pinned checkout. The generator
+records SHA256 provenance, executes the real source algorithms 32 times, and never
+runs the upstream application. Go is **not** a runtime/sidecar dependency.
+
+One malformed-schema vector has multiple genuine upstream results: Go map iteration
+can make conflicting keyword/property-bag assignments overwrite each other. Those
+observed variants are explicitly retained in the fixture, not hidden or replaced
+with TypeScript-generated expectations. Every deterministic vector must match exactly.
+
+The source cleaner also confuses schema keywords with parameter names in a properties
+map (e.g. it deletes a legitimate `type` parameter). `codexToolSchema` is the
+source-equivalence kernel; `piToolSchema` makes the smallest position-aware adaptation
+so Pi parameters named `type`, `format`, `$defs`, `required` or `enum` survive.
+This is a deliberate compatibility fix, not byte-for-byte replication of that bug.
+The differential kernel and the Pi adaptation have separate tests.
+
+## Remaining application gap — not a transport/database boundary
+
+The source's **separate account-management `AntigravityClient.Sync`**
+(`auth/antigravity_client.go:562–631`) also performs a one-shot
+`fetchAvailableModels` quota/catalog snapshot, `retrieveUserQuotaSummary`, and
+AI-credit `loadCodeAssist`, including a quota-401 refresh followed by identity
+rebuilding. This is **not merely its background polling scheduler**.
+
+That source-normalized one-shot Sync/snapshot/gate lifecycle has **not** been
+integrated into Pi login/refresh in this revision. Pi's explicitly invoked
+`/antigravity.usage`/model commands remain available, but are not an implementation
+of that state machine. Request-observed HTTP/SSE health is implemented; pre-dispatch
+account entitlement/quota snapshots and quota-pressure-based account selection are
+not equivalent. This is substantive remaining work, not an acceptance boundary
+that makes the migration "complete". See [SOURCE_REVIEW.md](SOURCE_REVIEW.md) for
+exact next steps. Do not label or merge this as a complete reproduction yet.
+
+## Actual architectural / SDK differences
 
 1. **Transport/browser:** Node/Undici is not Go net/http. TLS ClientHello,
    ALPN/HTTP2, header order/canonicalization, pooling, proxy/DNS/decompression and
-   browser fingerprints are not equivalent. No Go sidecar, TLS impersonation or
-   official browser environment was introduced.
-2. **Pi semantics:** provider/model registration, transcript adaptation, Pi's
-   system-prompt normalization and SDK-specific events remain. The reference's
-   entire gateway client-scaffolding regex/code-block masking engine, arbitrary
-   OpenAI/Anthropic payload adapters, structured-output gateway emulation, and
-   every malformed-schema edge case have **not** been translated. Schema tests
-   cover the supported Pi input contract, not full differential fuzz equivalence.
-3. **Additional Pi features:** search, URL reader, image-generation tools,
-   on-demand model discovery and usage diagnostics remain their Pi implementations
-   with the shared default UA. They are not new codex2api gateway endpoints;
-   their envelope/probing behavior is not claimed to be identical.
-4. **Quota/scheduler:** request-related cooldown/health handling is ported. Full
-   gateway account-affinity balancing, distributed CAS/outbox coordination,
-   quota-summary/AI-credit background snapshots and automatic polling are not
-   installed. No additional background Google traffic was added. Capacity
-   pressure does not silently select a weaker sibling model on the default path.
-5. **Storage:** Pi keeps its owner-only plaintext local auth store. It is not
-   encrypted-at-rest or a transactional multi-process database. Refresh de-dupe
-   is per-process; run only one Pi writer per auth directory. SDK expiry stores
-   the five-minute lead once, rather than Go's raw expiry + dispatch skew.
-6. **SSE failures:** HTTP-side health handling is structured; errors carried
-   inside a 200 SSE stream fail closed without internal replay. They do not yet
-   update all persistent health/quota snapshots in the same manner as gateway
-   handler-side classification. The Pi host may have its own retry policy.
-7. **Validation limits:** no user credential migration, real OAuth consent,
-   real generation, live quota check, transport capture, or account-risk experiment
-   was performed. Runtime behavior with Google remains unverified.
-
-These gaps are explicit acceptance boundaries, not hidden behind “complete” or
-“safer” labels. If full gateway-level byte-for-byte and scheduler parity is the
-requirement, this PR is not sufficient and should not be merged as such.
+   browser fingerprints are not equivalent. No Go sidecar or impersonation was added.
+2. **Pi-facing contract:** Pi provider registration, transcript conversion,
+   streaming events, manual callback and explicitly invoked extra tools remain.
+   No external OpenAI/Anthropic gateway, administration UI or database is installed.
+   Pi's explicit session ID maps to the reference's metadata session seed.
+   Arbitrary SDK prompt promises cannot be forcibly cancelled without host support;
+   losing OAuth race results are ignored and listeners/server/timers are cleaned up.
+3. **State:** owner-only plaintext local auth, atomic rename and in-process refresh
+   de-duplication are not encryption-at-rest, distributed CAS/Redis or multi-writer
+   transactions. One Pi writer per auth directory is required. Full gateway pool
+   balancing, periodic snapshot polling and expiry-priority scheduling are not installed.
+4. **Local model UI:** the 44 published IDs come from the pin, not live availability.
+   Pi-required UI price/context fields reuse inherited family metadata and are not
+   verified quotas/prices/limits for newer IDs. No default Gemini output-token cap
+   is sent (matching the source), even when Pi's UI displays a local token budget.
+5. **Validation:** no real consent, Google call, live quota check, transport capture
+   or account-risk experiment was performed. Runtime behavior with Google remains
+   unverified. The Pi host can independently retry an error; the provider does not
+   replay a consumed HTTP-200 body or partial output.
 
 ## Install / roll out
 
@@ -133,7 +186,8 @@ is part of this migration.
 
 ## Verification
 
-- `yarn test:codex`: default-profile offline contracts.
+- `yarn test:codex`: 19 default-profile contract groups + 714 source-derived vectors
+  - application/state-machine regression groups.
 - `yarn test`: isolated original Pi regression scripts under the explicit legacy
   profile plus default-profile contracts, source typecheck, lint and security-check.
   It runs every group even if one fails, and returns nonzero if anything fails.

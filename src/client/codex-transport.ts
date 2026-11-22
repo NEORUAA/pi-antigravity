@@ -1,6 +1,6 @@
 /** Consumer request dispatch adapted from codex2api d8e1981f's
  * proxy/antigravity_responses.go and antigravity_quota.go. */
-import type { AntigravityApiKey, AntigravityGenerateRequest } from "../types/types.js";
+import type { AntigravityApiKey } from "../types/types.js";
 import {
   accountAvailable,
   failoverToNextAccount,
@@ -13,28 +13,59 @@ import { antigravityEnv, isRecord } from "../utils/util.js";
 import { safeError } from "../utils/security.js";
 import { setLastEndpoint, setLastStatus, setLastProjectId } from "../diagnostics/diagnostics.js";
 
-export type QuotaSignal = { kind: "rate" | "quota" | "capacity"; delay?: number; model?: string };
+export type QuotaSignal = {
+  kind: "rate" | "quota" | "capacity";
+  delay?: number;
+  model?: string;
+  reason?: string;
+};
 export function durationMillis(value: unknown): number | undefined {
-  let result: number | undefined;
-  if (typeof value === "number") result = value * 1000;
+  let nanoseconds: number | undefined;
+  if (typeof value === "number") nanoseconds = Math.trunc(value * 1e9);
   if (isRecord(value) && ("seconds" in value || "nanos" in value))
-    result = Number(value.seconds ?? 0) * 1000 + Number(value.nanos ?? 0) / 1e6;
-  if (typeof value === "string" && /^(?:\d+(?:\.\d+)?(?:h|m|s|ms|us|µs|ns))+$/.test(value)) {
-    const units: Record<string, number> = {
-      h: 3_600_000,
-      m: 60_000,
-      s: 1000,
-      ms: 1,
-      us: 0.001,
-      µs: 0.001,
-      ns: 0.000001,
+    nanoseconds =
+      Math.trunc(Number(value.seconds ?? 0) * 1e9) + Math.trunc(Number(value.nanos ?? 0));
+  if (typeof value === "string") {
+    let text = value.trim();
+    if (!text || text.length > 128) return undefined;
+    let negative = false;
+    if (/^[+-]/.test(text)) {
+      negative = text[0] === "-";
+      text = text.slice(1);
+    }
+    if (text === "0") return 0;
+    const units: Record<string, bigint> = {
+      h: 3_600_000_000_000n,
+      m: 60_000_000_000n,
+      s: 1_000_000_000n,
+      ms: 1_000_000n,
+      us: 1000n,
+      µs: 1000n,
+      μs: 1000n,
+      ns: 1n,
     };
-    result = Array.from(value.matchAll(/(\d+(?:\.\d+)?)(ms|us|µs|ns|h|m|s)/g)).reduce(
-      (sum, match) => sum + Number(match[1]) * units[match[2]],
-      0,
-    );
+    const pattern = /((?:\d+(?:\.\d*)?|\.\d+))(ms|us|µs|μs|ns|h|m|s)/gy;
+    let total = 0n,
+      cursor = 0,
+      match: RegExpExecArray | null;
+    while ((match = pattern.exec(text))) {
+      const [integer, fraction = ""] = match[1].split(".");
+      const precision = fraction.slice(0, 30);
+      total += BigInt(integer || "0") * units[match[2]];
+      if (precision)
+        total += (BigInt(precision) * units[match[2]]) / 10n ** BigInt(precision.length);
+      cursor = pattern.lastIndex;
+      if (total > 0x7fffffffffffffffn) return undefined;
+    }
+    if (!cursor || cursor !== text.length || (negative && total > 0n)) return undefined;
+    return Number(total) / 1e6;
   }
-  return result !== undefined && Number.isFinite(result) && result >= 0 ? result : undefined;
+  return nanoseconds !== undefined &&
+    Number.isFinite(nanoseconds) &&
+    nanoseconds >= 0 &&
+    nanoseconds < 2 ** 63
+    ? nanoseconds / 1e6
+    : undefined;
 }
 export function quotaSignal(status: number, body: string): QuotaSignal | undefined {
   if (status !== 429 && status !== 503) return undefined;
@@ -66,20 +97,26 @@ export function quotaSignal(status: number, body: string): QuotaSignal | undefin
     if (type.endsWith("google.rpc.RetryInfo")) delay = durationMillis(detail.retryDelay) ?? delay;
   }
   const lower = body.toLowerCase();
-  if (
-    reason === "MODEL_CAPACITY_EXHAUSTED" ||
-    (!reason && lower.includes("model_capacity_exhausted"))
-  )
-    return { kind: "capacity", delay, model };
-  if (
-    reason === "QUOTA_EXHAUSTED" ||
-    (!reason && /quota_exhausted|quota exhausted|exhausted your capacity on this model/.test(lower))
-  )
-    return { kind: "quota", delay, model };
+  if (reason === "MODEL_CAPACITY_EXHAUSTED") return { kind: "capacity", delay, model, reason };
+  if (reason === "QUOTA_EXHAUSTED") return { kind: "quota", delay, model, reason };
   if (reason === "RATE_LIMIT_EXCEEDED")
-    return { kind: delay !== undefined && delay >= 300_000 ? "quota" : "rate", delay, model };
-  if (status === 429 && (error.status === "RESOURCE_EXHAUSTED" || delay !== undefined))
-    return { kind: "rate", delay, model };
+    return {
+      kind: delay !== undefined && delay >= 300_000 ? "quota" : "rate",
+      delay,
+      model,
+      reason,
+    };
+  if (lower.includes("model_capacity_exhausted")) return { kind: "capacity", delay, model, reason };
+  if (/quota_exhausted|quota exhausted|exhausted your capacity on this model/.test(lower))
+    return { kind: "quota", delay, model, reason };
+  if (
+    status === 429 &&
+    (String(error.status ?? "")
+      .trim()
+      .toUpperCase() === "RESOURCE_EXHAUSTED" ||
+      delay !== undefined)
+  )
+    return { kind: "rate", delay, model, reason };
   return undefined;
 }
 export class SameEndpointBudget {
@@ -101,10 +138,22 @@ export class SameEndpointBudget {
 export class GenerationHTTPError extends Error {
   readonly status: number;
   readonly body: string;
-  constructor(status: number, body: string) {
-    super(`Antigravity HTTP ${status}: ${safeError(body).slice(0, 400)}`);
+  readonly fromBody: boolean;
+  readonly headers?: Headers;
+  constructor(status: number, body: string, fromBody = false, headers?: Headers) {
+    let message = body;
+    try {
+      const value: unknown = JSON.parse(body);
+      if (isRecord(value) && isRecord(value.error) && typeof value.error.message === "string")
+        message = value.error.message;
+    } catch {
+      /* plain HTTP error */
+    }
+    super(`Antigravity HTTP ${status}: ${safeError(message).slice(0, 400)}`);
     this.status = status;
     this.body = body;
+    this.fromBody = fromBody;
+    this.headers = headers;
   }
 }
 export async function boundedErrorBody(response: Response): Promise<string> {
@@ -129,7 +178,9 @@ export async function boundedErrorBody(response: Response): Promise<string> {
 export type GenerationDispatchOptions = {
   credentials: AntigravityApiKey;
   model: string;
-  build: (projectId: string) => AntigravityGenerateRequest | Promise<AntigravityGenerateRequest>;
+  build: (projectId: string) => object | Promise<object>;
+  method?: "generateContent" | "streamGenerateContent";
+  onAccount?: (credentials: AntigravityApiKey) => void;
   send: (url: string, init: RequestInit) => Promise<Response>;
   signal?: AbortSignal;
   sleep?: typeof abortableDelay;
@@ -150,6 +201,7 @@ export async function executeCodexGeneration(
       continue;
     }
     try {
+      options.onAccount?.(credentials);
       return await dispatchAccount(credentials);
     } catch (error) {
       options.signal?.throwIfAborted();
@@ -164,18 +216,15 @@ export async function executeCodexGeneration(
           continue;
         }
       }
-      if (error.status === 403) {
-        const reason = /VALIDATION_REQUIRED|TOS_VIOLATION/.exec(error.body)?.[0];
-        if (reason) markAccountHealth(credentials.token, options.model, { block: reason });
-      }
+      observeConsumerFailure(
+        credentials.token,
+        options.model,
+        error.status,
+        error.body,
+        error.headers,
+      );
       const quota = quotaSignal(error.status, error.body);
-      if (error.status === 429 && quota?.kind !== "capacity") {
-        const cooldown =
-          quota?.delay ??
-          (quota?.kind === "quota" ? 300_000 : quota?.kind === "rate" ? 5000 : 30_000);
-        markAccountHealth(credentials.token, options.model, {
-          cooldownMs: Math.min(1_800_000, Math.max(1, cooldown)),
-        });
+      if (quota?.kind !== "capacity" && (error.status === 429 || quota)) {
         const next = await failoverToNextAccount(tried, options.model);
         if (next) {
           credentials = next;
@@ -203,15 +252,19 @@ export async function executeCodexGeneration(
         for (;;) {
           let response: Response;
           try {
-            response = await options.send(`${endpoint}/v1internal:streamGenerateContent?alt=sse`, {
-              method: "POST",
-              headers: {
-                ...antigravityHeaders(account.token),
-                ...(userProject ? { "x-goog-user-project": account.projectId } : {}),
+            response = await options.send(
+              `${endpoint}/v1internal:${options.method === "generateContent" ? "generateContent" : "streamGenerateContent?alt=sse"}`,
+              {
+                method: "POST",
+                headers: {
+                  ...antigravityHeaders(account.token),
+                  ...(userProject ? { "x-goog-user-project": account.projectId } : {}),
+                },
+                body,
+                signal: options.signal,
+                redirect: "error",
               },
-              body,
-              redirect: "error",
-            });
+            );
           } catch (error) {
             options.signal?.throwIfAborted();
             transportError = error;
@@ -220,7 +273,7 @@ export async function executeCodexGeneration(
           setLastStatus(response.status);
           if (response.ok) return response;
           const text = await boundedErrorBody(response);
-          last = new GenerationHTTPError(response.status, text);
+          last = new GenerationHTTPError(response.status, text, false, response.headers);
           if (response.status === 408 || response.status === 429 || response.status >= 500) {
             const delay = budget.delay(response.status, text);
             if (delay !== undefined) {
@@ -250,4 +303,116 @@ export async function executeCodexGeneration(
       ? transportError
       : new Error("Antigravity endpoints unavailable");
   }
+}
+
+/** Same persistent classification for HTTP failures and errors inside HTTP-200 SSE/JSON.
+ * Observers never dispatch: a consumed frame can NEVER trigger request replay. */
+export function observeConsumerFailure(
+  token: string,
+  model: string,
+  status: number,
+  body: string,
+  headers?: Headers,
+): void {
+  const quota = quotaSignal(status, body);
+  const block = status === 403 ? /VALIDATION_REQUIRED|TOS_VIOLATION/.exec(body)?.[0] : undefined;
+  const failure = {
+    at: Date.now(),
+    status,
+    model,
+    kind: block ?? quota?.kind ?? (status === 401 ? "auth" : status >= 500 ? "upstream" : "client"),
+  };
+  if (status !== 429 && !quota) {
+    markAccountHealth(token, model, { block, failure });
+    return;
+  }
+  let cooldown =
+    quota?.kind === "capacity"
+      ? 10_000
+      : quota?.delay && quota.delay > 0
+        ? quota.delay
+        : quota?.kind === "quota"
+          ? 300_000
+          : quota?.reason
+            ? 30_000
+            : 5000;
+  if (quota?.delay === undefined && headers?.has("retry-after")) {
+    const raw = headers.get("retry-after")!;
+    const value = /^\d+$/.test(raw.trim()) ? Number(raw) * 1000 : Date.parse(raw) - Date.now();
+    if (Number.isFinite(value) && value > 0) cooldown = value;
+  }
+  markAccountHealth(token, model, {
+    failure,
+    block,
+    cooldownMs: Math.min(1_800_000, Math.max(1000, cooldown)),
+    familyQuota: quota?.kind === "quota",
+    quotaModel: quota?.model,
+  });
+}
+export function consumerErrorStatus(error: Record<string, unknown>): number {
+  const code =
+    typeof error.code === "number"
+      ? Math.trunc(error.code)
+      : typeof error.code === "string" && /^[+-]?\d+$/.test(error.code.trim())
+        ? Number(error.code.trim())
+        : 0;
+  if (code >= 400 && code <= 599) return code;
+  const statuses: Record<string, number> = {
+    INVALID_ARGUMENT: 400,
+    FAILED_PRECONDITION: 400,
+    OUT_OF_RANGE: 400,
+    UNAUTHENTICATED: 401,
+    PERMISSION_DENIED: 403,
+    NOT_FOUND: 404,
+    ALREADY_EXISTS: 409,
+    ABORTED: 409,
+    RESOURCE_EXHAUSTED: 429,
+    UNIMPLEMENTED: 501,
+    INTERNAL: 500,
+    UNKNOWN: 500,
+    DATA_LOSS: 500,
+    UNAVAILABLE: 503,
+    DEADLINE_EXCEEDED: 504,
+  };
+  return (
+    statuses[
+      String(error.status ?? "")
+        .trim()
+        .toUpperCase()
+    ] ?? 502
+  );
+}
+export function observeConsumerDocument(token: string, model: string, document: unknown): void {
+  if (!isRecord(document)) return;
+  const envelope =
+    !Object.hasOwn(document, "error") && isRecord(document.response) ? document.response : document;
+  if (!Object.hasOwn(envelope, "error")) return;
+  const error = isRecord(envelope.error) ? envelope.error : {};
+  const status = consumerErrorStatus(error);
+  const body = JSON.stringify({ error });
+  observeConsumerFailure(token, model, status, body);
+  throw new GenerationHTTPError(status, body, true);
+}
+/** Bound nonstream responses without a buffering .json() call. */
+export async function readConsumerJson(
+  response: Response,
+  maxBytes = 32 * 1024 * 1024,
+): Promise<unknown> {
+  if (!response.body) throw new Error("Antigravity returned an empty response");
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  try {
+    for (;;) {
+      const item = await reader.read();
+      if (item.done) break;
+      bytes += item.value.byteLength;
+      if (bytes > maxBytes) throw new Error("Antigravity JSON response exceeds its size limit");
+      chunks.push(item.value);
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
 }

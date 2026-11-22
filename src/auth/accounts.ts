@@ -27,7 +27,12 @@ export type StoredAccount = AntigravityOAuthCredentials & {
   accountId: string;
   addedAt: number;
   lastUsedAt: number;
-  health?: { blockedReason?: string; cooldowns?: Record<string, number> };
+  health?: {
+    blockedReason?: string;
+    cooldowns?: Record<string, number>;
+    /** Sanitized outcome only: never persist raw upstream error bodies or tokens. */
+    lastFailure?: { at: number; status: number; kind: string; model: string };
+  };
 };
 
 type AccountsFile = {
@@ -367,9 +372,13 @@ export async function failoverToNextAccount(
       const account = await ensureFresh(candidate);
       if (!account.access || triedAccessTokens.has(account.access)) continue;
       account.lastUsedAt = Date.now();
-      store.accounts[account.accountId] = account;
-      store.activeAccountId = account.accountId;
-      saveAccountStore(store);
+      const latest = loadAccountStore();
+      const live = latest.accounts[account.accountId];
+      if (!live || (!legacyProfile() && !available(live, model))) continue;
+      account.health = live.health;
+      latest.accounts[account.accountId] = account;
+      latest.activeAccountId = account.accountId;
+      saveAccountStore(latest);
       writeActiveCredential(account);
       return apiKeyFor(account);
     } catch (error) {
@@ -400,20 +409,32 @@ export function accountAvailable(token: string, model: string): boolean {
   const account = Object.values(loadAccountStore().accounts).find((item) => item.access === token);
   return !account || available(account, model);
 }
-/** Monotonic per-model/family cooldowns; shared capacity never calls this. */
+/** Model/wire cooldowns; only quota exhaustion cools an entire Gemini family. */
 export function markAccountHealth(
   token: string,
   model: string,
-  options: { block?: string; cooldownMs?: number },
+  options: {
+    block?: string;
+    cooldownMs?: number;
+    familyQuota?: boolean;
+    quotaModel?: string;
+    failure?: { at: number; status: number; kind: string; model: string };
+  },
 ): void {
   const store = loadAccountStore();
   const account = Object.values(store.accounts).find((item) => item.access === token);
   if (!account) return;
   account.health ??= {};
   if (options.block) account.health.blockedReason = options.block;
+  if (options.failure) account.health.lastFailure = options.failure;
   if (options.cooldownMs) {
     account.health.cooldowns ??= {};
-    for (const key of [model, family(model)])
+    const familyKey = model.startsWith("gemini-")
+      ? family(model)
+      : options.quotaModel
+        ? family(options.quotaModel)
+        : model;
+    for (const key of [model, ...(options.familyQuota ? [familyKey] : [])])
       account.health.cooldowns[key] = Math.max(
         account.health.cooldowns[key] ?? 0,
         Date.now() + options.cooldownMs,
@@ -433,6 +454,7 @@ export async function refreshAccountAfterUnauthorized(
     const latest = loadAccountStore();
     // Do not resurrect an account removed while the refresh was in flight.
     if (!latest.accounts[previous.accountId]) return undefined;
+    updated.health = latest.accounts[previous.accountId].health;
     latest.accounts[previous.accountId] = updated;
     saveAccountStore(latest);
     if (latest.activeAccountId === previous.accountId) writeActiveCredential(updated);
