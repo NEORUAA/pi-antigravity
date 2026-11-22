@@ -1,6 +1,6 @@
 # Verification record
 
-Local final review: 2026-11-22 19:03 JST (unpublished). Node v24.22.1, Yarn 4.18.0, Linux.
+Local final review: 2026-11-22 19:10 JST. Node v24.22.1, Yarn 4.18.0, Linux.
 
 No dependency lifecycle scripts, personal credential reads, Google logins,
 real Google upstream calls, live smoke scripts or account-risk tests were run.
@@ -23,9 +23,11 @@ The runner overrides inherited OAuth configuration with synthetic client values.
 | Original Pi regression scripts, explicit legacy profile | 23/24 PASS                                                                                                                      |
 | Combined offline test command                           | **FAIL**, correctly returns nonzero for the baseline URL-reader failure below                                                   |
 
-All follow-up revisions are local only. No second push, merge, new PR or PR readiness
-change was made. One-shot Sync/gates and the previously missing pending-checkpoint/
-restart lifecycle are implemented. See [SOURCE_REVIEW.md](SOURCE_REVIEW.md) for the
+The tested implementation ends at `9e730068137545288a327e3378048b1a14f7b8ee`;
+subsequent release-documentation edits do not change runtime code. Publication
+target: `main` through [PR #1](https://github.com/NEORUAA/pi-antigravity/pull/1),
+whose merge state and Git history are authoritative. One-shot Sync/gates and the
+previously missing pending-checkpoint/restart lifecycle are implemented. See [SOURCE_REVIEW.md](SOURCE_REVIEW.md) for the
 bounded final source trace and explicit Pi/platform adaptations. Passing offline
 fixtures do not establish live upstream behavior or lower account risk.
 
@@ -81,7 +83,7 @@ not TypeScript-generated expectations.
 [Run 45004945823](https://github.com/NEORUAA/pi-antigravity/actions/runs/45004945823)
 was read once; Node 22.19.0, 24 and 26 each failed only the same inherited
 scenarioLongFence test. Other legacy scripts and the original default consumer
-suite passed. This run covers `e04eac9`, not the unpublished local revision.
+suite passed. This run covers `e04eac9`, not the later follow-up changes.
 No remote retry or polling loop was started.
 
 ## Covered default-profile cases

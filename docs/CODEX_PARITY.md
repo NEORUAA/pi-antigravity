@@ -203,9 +203,10 @@ replacement, forbidden/no-project retries, optional failures and concurrent remo
 
 ## Install / roll out
 
-1. Review the private PR and this matrix. The PR does not merge itself. The
-   `main` baseline remains upstream Pi behavior until the reviewed change lands.
-2. After merging, install **this private repository**, not npm:pi-antigravity or
+1. The release target is `main` through [PR #1](https://github.com/NEORUAA/pi-antigravity/pull/1).
+   The ordinary merge preserves upstream history and all migration commits; the
+   PR records its canonical merge state. Review this matrix and the verification record.
+2. Install **this private repository** from `main`, not npm:pi-antigravity or
    Rahularya01's public URL: `pi install git:github.com/NEORUAA/pi-antigravity`.
    Git authentication for that private repository must already work on your own
    computer. Alternatively clone it yourself, install its locked dependencies,
@@ -238,8 +239,9 @@ is part of this migration.
 
 ## Verification
 
-- `yarn test:codex`: 19 default-profile contract groups + 714 source-derived vectors
-  - application/state-machine regression groups.
+- `yarn test:codex`: 19 default-profile contract groups, 714 source-derived vectors,
+  558 quota-gate vectors, 24 application/state-machine groups, 11 one-shot Sync
+  groups and 18 durable checkpoint/restart groups.
 - `yarn test`: isolated original Pi regression scripts under the explicit legacy
   profile plus default-profile contracts, source typecheck, lint and security-check.
   It runs every group even if one fails, and returns nonzero if anything fails.

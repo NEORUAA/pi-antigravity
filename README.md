@@ -39,7 +39,7 @@ Want to equip Pi with MCP, web access, subagents, and todos? Install [`pi-essent
 
 ## Install
 
-Install the reviewed private repository after merging its migration PR:
+Install the reviewed private repository from its `main` branch:
 
 ```bash
 pi install git:github.com/NEORUAA/pi-antigravity
