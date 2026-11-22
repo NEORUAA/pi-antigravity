@@ -52,15 +52,34 @@ The Sync suite also tests single-flight over the entire normal refresh/sync,
 fraction vs zero and deletion races. The previous parallel-refresh test now asserts
 all four control-plane stages, not the obsolete single `loadCodeAssist` call.
 
-Remaining **specific durability gap**: the Pi SDK returns credentials-or-error,
-not both. If a token refresh succeeds but subsequent mandatory profile/project/
-catalog validation fails, new credentials are not checkpointed in a DB-first
-pending-revalidation record; the SDK receives an error and may require re-login.
-This behavior must not be described as identical to Go's durable recovery path.
-Missing project on a fresh login fails closed rather than creating an unusable
-management account. See CODEX_PARITY for immediate local V2 promotion and explicit
-active-account affinity vs full gateway pool scheduling. No background polling,
-distributed CAS, DB/Redis or sidecar was introduced.
+## Durable pending/restart follow-up and bounded final review
+
+The previous durability gap is **implemented**, not waived. The source anchors are
+`auth/store.go:12714–12759,12785–12897,12902–12930`: rotated credentials survive
+validation failure, pending identity is quarantined, and principal changes require
+an explicit identity-sync decision. `auth/checkpoint.ts` provides the single-writer
+local equivalent with owner-only atomic/fsynced JSON, family aliases, epochs and
+revision fences. It deliberately does not introduce a distributed DB/lease service.
+
+| Consumer lifecycle                    | Final local review / evidence                                                                                                                                                                     |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Authorization/callback/token exchange | Existing state/PKCE/random-port/manual flow retained; bounded token-error bodies and fixed OAuth error-code output                                                                                |
+| Refresh and failures                  | Received rotation checkpointed before verified userinfo; pending recoveries skip needless token exchange; mixed refresh/sync calls share one family flight                                        |
+| Verified identity                     | Userinfo ID/email required, no ID-token claim authentication; known-subject change is quarantined until fresh consent; same subject may rename email                                              |
+| Durability and restart                | Real child process exits after failed validation, next process recovers; promotion-before-projection is resolved through the verified journal; old SDK tuples do not override new identity        |
+| Deletion/revocation/cleanup           | Before-network and late-response revocation tests; fresh consent supersedes old epoch; corrupt stores fail closed; failed atomic rename removes temp files; invalid_grant clears unusable secrets |
+| Project/tier/onboarding               | Production/sandbox/daily entitlement policy, bounded async onboarding, caller-project behavior retained; identity is re-observed before old project/quota facts can be retained                   |
+| Model/request/scaffolding/schema      | Prior independent Go vectors remain unchanged; Pi property-name and native-tool/hook adaptations retained                                                                                         |
+| Generation/HTTP/SSE                   | Shared transport/identity/retry budgets, persistent sanitized health, no internal replay of consumed errors/partial output, bounded parsing/cancellation retained                                 |
+| Quota and account routing             | One-shot catalog/groups/credits and 558 source Go gate vectors; same-principal/project old zero observations retain their original timestamp after optional failure                               |
+| Pi extra tools                        | Shared consumer identity/deadlines/pool; native crawler contract retained; optional discovery/citation probes remain explicit opt-in                                                              |
+
+No additional applicable Pi core-login/consumer blocker was identified in this
+bounded review. This is not a claim of universal Go/Node equivalence or real-Google
+validation. Explicit boundaries remain: single-writer local files rather than
+cross-process/distributed CAS, Pi-selected account rather than the gateway weighted
+pool/administration service, no background scheduler, Pi error/events rather than
+HTTP gateway envelopes, and the documented Node/Go transport/clock differences.
 
 ## Remote CI snapshot
 

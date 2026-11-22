@@ -148,13 +148,26 @@ replacement, forbidden/no-project retries, optional failures and concurrent remo
   is immediately promoted to a local trusted V2 observation (2-hour TTL, the source
   default interval's derived TTL). Source's standalone client Sync returns facts;
   its separate durable summary producer normally attaches V2 scheduling metadata.
-- SDK login/refresh must either return validated credentials or throw. Missing
-  verified profile/project or mandatory catalog failure therefore fails closed;
-  it does not publish an unusable partially-synchronized gateway account. Unlike
-  the Go DB-first pending-revalidation lifecycle, a newly rotated credential is
-  **not durably checkpointed before subsequent validation fails**. Re-login may be
-  required after such a failure; crash recovery/partial credential persistence is
-  a concrete remaining durability difference, not an assertion of full equivalence.
+- SDK login/refresh still returns validated credentials or an error, but a new
+  owner-only `antigravity-checkpoints.json` **durably records a received rotated
+  tuple before profile/project/catalog validation**. Pending material never reaches
+  normal API-key/consumer calls. Successful validation promotes the journal before
+  SDK/account-file projection, so restart can repair an interrupted publication.
+- Temporary failures/cancellation retain the rotated tuple for revalidation without
+  another unnecessary token exchange. A pending active account is repaired once at
+  session start; `/antigravity.accounts switch <index|email>` retries explicitly.
+  Normal verified sessions cause no additional recovery probes or background loop.
+- New validations require Google userinfo's verified email **and actual subject ID**,
+  never decoded ID-token claims. A changed known subject stays quarantined even if
+  the replacement is verified. Pi's minimal equivalent of the source administrative
+  identity sync is **fresh OAuth consent**. Existing Pi credentials without a subject
+  can bootstrap one from verified userinfo only when no previous identity contradicts
+  it; project/snapshots are revalidated, not imported from an ID token.
+- Journal family epochs/revisions fence late refresh/consent results. Account removal
+  wipes raw journal tuples and keeps hashed tombstones, preventing stale SDK auth
+  from resurrecting them. Permanent invalid_grant clears unusable tuples; unverified
+  or changed-principal failures remain fenced until fresh consent/removal. Failure
+  metadata contains fixed codes, never upstream bodies, token values or URLs.
 - Pi reports provider errors/events, not the gateway's HTTP 429/Retry-After envelope.
   No real Google/credential test or safety-risk comparison has been performed.
 
@@ -173,7 +186,10 @@ replacement, forbidden/no-project retries, optional failures and concurrent remo
    losing OAuth race results are ignored and listeners/server/timers are cleaned up.
 3. **State:** owner-only plaintext local auth, atomic rename and in-process refresh
    de-duplication are not encryption-at-rest, distributed CAS/Redis or multi-writer
-   transactions. One Pi writer per auth directory is required. Full gateway pool
+   transactions. The journal uses exclusive 0600 temp files, file fsync, atomic
+   rename and directory fsync; the tested guarantee requires a filesystem/platform
+   supporting those operations (Linux/POSIX was exercised). Existing directories
+   are not silently chmodded. One Pi writer per auth directory is required. Full gateway pool
    balancing, periodic snapshot polling and expiry-priority scheduling are not installed.
 4. **Local model UI:** the 44 published IDs come from the pin, not live availability.
    Pi-required UI price/context fields reuse inherited family metadata and are not
@@ -199,7 +215,9 @@ replacement, forbidden/no-project retries, optional failures and concurrent remo
 4. Back up your auth directory privately before rollout. Existing credentials
    with a real project ID remain usable; no credentials were copied from this
    execution environment. Prefer `/login antigravity` again to populate the
-   verified identity, project/tier, and OAuth client tuple coherently.
+   verified identity, Google subject, project/tier, and OAuth client tuple coherently.
+   Keep the checkpoint file with your private auth backup; do not copy it to logs
+   or publish it. Pending/permanent states intentionally block ordinary requests.
 5. Default login callback is `http://127.0.0.1:<ephemeral-port>/oauth-callback`.
    Remote/headless users should paste the actual full callback URL shown in the
    browser; the historical fixed 51121 SSH-tunnel example does not apply to the

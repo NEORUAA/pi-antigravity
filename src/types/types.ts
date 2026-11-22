@@ -15,6 +15,8 @@ import type { GeminiRole, GeminiToolCallingMode, ThinkingEffort, ToolChoice } fr
 export type AntigravityOAuthCredentials = OAuthCredentials & {
   projectId?: string;
   email?: string;
+  /** Verified Google userinfo ID, never decoded ID-token claims. */
+  subject?: string;
   identity?: IdentityContext;
   quota?: QuotaSnapshot;
   oauthClientKey?: string;

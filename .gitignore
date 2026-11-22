@@ -18,3 +18,11 @@ scripts/smoke-all-models-results.json
 *.tgz
 
 .cache/
+
+# Runtime OAuth data must never be committed, even with a custom auth directory.
+antigravity-checkpoints.json
+antigravity-checkpoints.json.*.tmp
+antigravity-accounts.json
+antigravity-accounts.json.*.tmp
+auth.json
+auth.json.*.tmp

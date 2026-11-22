@@ -1,3 +1,12 @@
+import {
+  validatedCredential,
+  verifiedCredentialForToken,
+  credentialNeedsRecovery,
+  sameCredentialFamily,
+  revokeCredentialCheckpoint,
+  checkpointTokenUsable,
+  CredentialCheckpointError,
+} from "./checkpoint.js";
 import { createHash, randomBytes } from "node:crypto";
 import {
   chmodSync,
@@ -126,7 +135,10 @@ function normalizeStore(value: Record<string, unknown> | undefined): AccountsFil
 }
 
 export function loadAccountStore(): AccountsFile {
-  return normalizeStore(readJsonObject(accountsPath()));
+  const parsed = readJsonObject(accountsPath());
+  if (!legacyProfile() && existsSync(accountsPath()) && !parsed)
+    throw new Error("Refusing to overwrite unreadable Antigravity account store");
+  return normalizeStore(parsed);
 }
 
 function saveAccountStore(store: AccountsFile): void {
@@ -143,6 +155,7 @@ function accountFromCredentials(
   credentials: AntigravityOAuthCredentials,
   existing?: StoredAccount,
 ): StoredAccount {
+  if (!legacyProfile()) credentials = validatedCredential(credentials);
   const now = Date.now();
   return {
     ...existing,
@@ -168,6 +181,9 @@ function findAccount(
   return Object.values(store.accounts).find(
     (account) =>
       account.refresh === credentials.refresh ||
+      (!legacyProfile() &&
+        (account.accountId === accountIdFor(credentials) ||
+          sameCredentialFamily(account, credentials as AntigravityOAuthCredentials))) ||
       (email !== undefined && account.email?.trim().toLowerCase() === email),
   );
 }
@@ -204,6 +220,7 @@ function writeActiveCredential(account: StoredAccount | undefined): void {
     auth.antigravity = {
       type: "oauth",
       email: account.email,
+      subject: account.subject,
       access: account.access,
       refresh: account.refresh,
       expires: account.expires,
@@ -228,6 +245,7 @@ function currentAuthCredentials(): AntigravityOAuthCredentials | undefined {
   const record = current as Record<string, unknown>;
   if (typeof record.refresh !== "string" || !record.refresh) return undefined;
   return {
+    subject: typeof record.subject === "string" ? record.subject : undefined,
     identity: record.identity as AntigravityOAuthCredentials["identity"],
     quota: record.quota as AntigravityOAuthCredentials["quota"],
     oauthClientKey: typeof record.oauthClientKey === "string" ? record.oauthClientKey : undefined,
@@ -245,8 +263,16 @@ function currentAuthCredentials(): AntigravityOAuthCredentials | undefined {
 }
 
 export function syncCurrentAuth(): void {
-  const credentials = currentAuthCredentials();
+  let credentials = currentAuthCredentials();
   if (!credentials) return;
+  if (!legacyProfile()) {
+    try {
+      credentials = validatedCredential(credentials);
+    } catch (error) {
+      if (error instanceof CredentialCheckpointError) return;
+      throw error;
+    }
+  }
   const store = loadAccountStore();
   const existing = findAccount(store, credentials);
   if (
@@ -313,6 +339,8 @@ async function ensureFresh(account: StoredAccount): Promise<StoredAccount> {
   if (!legacyProfile() && account.health?.blockedReason)
     throw new Error(`Antigravity account needs re-login: ${account.health.blockedReason}`);
   // expires already carries the SDK's five-minute lead; do not subtract it twice.
+  if (!legacyProfile() && !checkpointTokenUsable(account.access))
+    return accountFromCredentials(await refreshAntigravityToken(account), account);
   if (account.access && account.expires > Date.now() + (legacyProfile() ? REFRESH_SKEW_MS : 0))
     return account;
   return accountFromCredentials(await refreshAntigravityToken(account), account);
@@ -356,6 +384,7 @@ export async function removeAccount(selector: string): Promise<StoredAccount | u
   const accountId = findAccountId(store, selector);
   if (!accountId) throw new Error(`Antigravity account not found: ${selector}`);
   const wasActive = store.activeAccountId === accountId;
+  if (!legacyProfile()) revokeCredentialCheckpoint(store.accounts[accountId]);
   delete store.accounts[accountId];
   if (wasActive) store.activeAccountId = undefined;
   // Publish removal before any fallback-account network wait. Clearing the old
@@ -438,13 +467,36 @@ function family(model: string): string {
     : model;
 }
 function available(account: StoredAccount, model?: string): boolean {
-  if (account.health?.blockedReason || quotaGate(account.quota, model ?? "").blocked) return false;
+  if (!legacyProfile()) {
+    try {
+      account = { ...account, ...validatedCredential(account) };
+    } catch (error) {
+      if (error instanceof CredentialCheckpointError) return false;
+      throw error;
+    }
+  }
+  if (
+    (!legacyProfile() && !checkpointTokenUsable(account.access)) ||
+    account.health?.blockedReason ||
+    (!legacyProfile() && quotaGate(account.quota, model ?? "").blocked)
+  )
+    return false;
   const cooldowns = account.health?.cooldowns;
   return !model || Math.max(cooldowns?.[model] ?? 0, cooldowns?.[family(model)] ?? 0) <= Date.now();
 }
+function accountForToken(store: AccountsFile, token: string): StoredAccount | undefined {
+  const exact = Object.values(store.accounts).find((account) => account.access === token);
+  if (exact || legacyProfile()) return exact;
+  const verified = verifiedCredentialForToken(token);
+  return verified ? findAccount(store, verified) : undefined;
+}
 export function accountAvailable(token: string, model: string): boolean {
-  const account = Object.values(loadAccountStore().accounts).find((item) => item.access === token);
-  return !account || available(account, model);
+  if (!legacyProfile() && !checkpointTokenUsable(token)) return false;
+  const account = accountForToken(loadAccountStore(), token);
+  if (legacyProfile()) return !account || available(account, model);
+  return account
+    ? available(account, model)
+    : !quotaGate(verifiedCredentialForToken(token)?.quota, model).blocked;
 }
 /** Model/wire cooldowns; only quota exhaustion cools an entire Gemini family. */
 export function markAccountHealth(
@@ -459,7 +511,7 @@ export function markAccountHealth(
   },
 ): void {
   const store = loadAccountStore();
-  const account = Object.values(store.accounts).find((item) => item.access === token);
+  const account = accountForToken(store, token);
   if (!account) return;
   account.health ??= {};
   if (options.block) account.health.blockedReason = options.block;
@@ -484,10 +536,14 @@ export async function refreshAccountAfterUnauthorized(
   token: string,
 ): Promise<AntigravityApiKey | undefined> {
   const store = loadAccountStore();
-  const previous = Object.values(store.accounts).find((item) => item.access === token);
+  const previous = accountForToken(store, token);
   if (!previous) return undefined;
   try {
-    const updated = accountFromCredentials(await refreshAntigravityToken(previous), previous);
+    const input =
+      legacyProfile() || credentialNeedsRecovery(previous)
+        ? previous
+        : validatedCredential(previous);
+    const updated = accountFromCredentials(await refreshAntigravityToken(input), previous);
     const latest = loadAccountStore();
     // Do not resurrect an account removed while the refresh was in flight.
     if (!latest.accounts[previous.accountId]) return undefined;
@@ -497,8 +553,25 @@ export async function refreshAccountAfterUnauthorized(
     if (latest.activeAccountId === previous.accountId) writeActiveCredential(updated);
     return apiKeyFor(updated);
   } catch (error) {
+    if (
+      error instanceof CredentialCheckpointError &&
+      !loadAccountStore().accounts[previous.accountId]
+    )
+      return undefined;
     if (error instanceof OAuthRefreshError && error.permanent)
       markAccountHealth(token, "", { block: "oauth_refresh_invalid" });
     throw error;
   }
+}
+
+/** Session-start repair only for the explicitly active pending account. No
+ * periodic polling and no catalog/identity probes for normal verified accounts. */
+export async function recoverPendingActiveAccount(): Promise<boolean> {
+  if (legacyProfile()) return false;
+  syncCurrentAuth();
+  const store = loadAccountStore();
+  const active = store.activeAccountId ? store.accounts[store.activeAccountId] : undefined;
+  if (!active || !credentialNeedsRecovery(active)) return false;
+  await activateAccount(active.accountId);
+  return true;
 }

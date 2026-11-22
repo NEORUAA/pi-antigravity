@@ -1,3 +1,14 @@
+import {
+  beginCredentialFlight,
+  credentialFlightKey,
+  assertCredentialFlight,
+  checkpointRotation,
+  promoteCheckpoint,
+  checkpointFailure,
+  validatedCredential,
+  CredentialCheckpointError,
+  type CredentialFlight,
+} from "./checkpoint.js";
 import { legacyProfile, profileUserAgent, abortableDelay } from "../compat/profile.js";
 import { provisionIdentity, readControlJSON, ControlPlaneError } from "./control-plane.js";
 import { fetchQuotaSnapshot } from "./quota-snapshot.js";
@@ -97,10 +108,13 @@ function generatePKCE(): { verifier: string; challenge: string } {
   return { verifier, challenge };
 }
 
+export class ProfileVerificationError extends Error {}
+export class PrincipalTransitionError extends Error {}
+
 export async function getUserProfile(
   token: string,
   signal?: AbortSignal,
-): Promise<{ email?: string }> {
+): Promise<{ email?: string; subject?: string }> {
   const url = legacyProfile()
     ? "https://www.googleapis.com/oauth2/v1/userinfo?alt=json"
     : "https://www.googleapis.com/oauth2/v2/userinfo";
@@ -138,10 +152,14 @@ export async function getUserProfile(
     }
     const data = await readControlJSON(res);
     if (!data || typeof data !== "object") throw new Error("Invalid Google profile response");
-    const profile = data as { email?: string; verified_email?: boolean };
+    const profile = data as { email?: string; verified_email?: boolean; id?: string };
     if (!legacyProfile() && (!profile.email?.trim() || profile.verified_email !== true))
-      throw new Error("Google profile did not confirm a verified email");
-    return { email: profile.email?.trim() };
+      throw new ProfileVerificationError("Google profile did not confirm a verified email");
+    if (!legacyProfile() && !profile.id?.trim())
+      throw new ProfileVerificationError("Google profile did not confirm a verified subject");
+    return legacyProfile()
+      ? { email: profile.email?.trim() }
+      : { email: profile.email?.trim(), subject: profile.id?.trim() };
   }
   throw new Error("Antigravity profile unavailable");
 }
@@ -452,9 +470,13 @@ export async function loginAntigravity(
       }).toString(),
     });
     if (!tokenResponse.ok) {
-      throw new Error(
-        `Token exchange failed: ${sanitizeOAuthProviderError(await tokenResponse.text())}`,
-      );
+      let failure = "unreadable OAuth provider response";
+      try {
+        failure = sanitizeOAuthProviderError(JSON.stringify(await readControlJSON(tokenResponse)));
+      } catch {
+        /* Bound malformed upstream failures; never echo raw token response bytes. */
+      }
+      throw new Error(`Token exchange failed: ${failure}`);
     }
     const tokenData = (await readControlJSON(tokenResponse)) as {
       access_token: string;
@@ -488,7 +510,7 @@ export async function loginAntigravity(
           idToken: typeof tokenData.id_token === "string" ? tokenData.id_token : undefined,
           scope: typeof tokenData.scope === "string" ? tokenData.scope : undefined,
         },
-        { signal: callbacks.signal },
+        { signal: callbacks.signal, freshLogin: true },
       );
     const { email } = await getUserProfile(tokenData.access_token, callbacks.signal);
     const identity = legacyProfile()
@@ -519,9 +541,78 @@ export class OAuthRefreshError extends Error {
   }
 }
 const refreshing = new Map<string, Promise<AntigravityOAuthCredentials>>();
+function runCredentialFlight(
+  flight: CredentialFlight,
+  task: () => Promise<AntigravityOAuthCredentials>,
+): Promise<AntigravityOAuthCredentials> {
+  const key = `${flight.family}:${flight.epoch}`;
+  const existing = refreshing.get(key);
+  if (existing) return existing;
+  const pending = Promise.resolve()
+    .then(() => {
+      assertCredentialFlight(flight);
+      return task();
+    })
+    .catch((error) => {
+      const invalid = error instanceof OAuthRefreshError && error.permanent;
+      const unverified = error instanceof ProfileVerificationError;
+      const transition = error instanceof PrincipalTransitionError;
+      const validation =
+        error instanceof ControlPlaneError &&
+        /VALIDATION_REQUIRED|TOS_VIOLATION/.test(error.message);
+      checkpointFailure(
+        flight,
+        invalid || unverified || transition || validation ? "permanent" : "temporary",
+        invalid
+          ? "oauth_refresh_invalid"
+          : transition
+            ? "principal_transition"
+            : unverified
+              ? "unverified_profile"
+              : validation
+                ? /TOS_VIOLATION/.test(error.message)
+                  ? "tos_violation"
+                  : "validation_required"
+                : "validation_unavailable",
+      );
+      throw error;
+    })
+    .finally(() => {
+      if (refreshing.get(key) === pending) refreshing.delete(key);
+    });
+  refreshing.set(key, pending);
+  return pending;
+}
 export function refreshAntigravityToken(
   credentials: OAuthCredentials,
 ): Promise<AntigravityOAuthCredentials> {
+  if (!legacyProfile()) {
+    let flight: CredentialFlight;
+    try {
+      flight = beginCredentialFlight(credentials);
+    } catch (error) {
+      return Promise.reject(
+        error instanceof CredentialCheckpointError && ["permanent", "revoked"].includes(error.code)
+          ? new OAuthRefreshError("Antigravity credential requires a fresh login", true)
+          : error instanceof Error
+            ? error
+            : new Error("Antigravity checkpoint failed"),
+      );
+    }
+    return runCredentialFlight(flight, async () => {
+      const candidate = flight.candidate;
+      if (flight.state === "pending")
+        return candidate.access && candidate.expires > Date.now()
+          ? validateCredential(candidate, { flight, forceRebuildProject: true })
+          : refreshTokenUncached(candidate, undefined, flight);
+      if (
+        flight.state === "verified" &&
+        (candidate.access !== credentials.access || candidate.refresh !== credentials.refresh)
+      )
+        return candidate;
+      return refreshTokenUncached(candidate, undefined, flight);
+    });
+  }
   const stored = credentials as AntigravityOAuthCredentials;
   const key = createHash("sha256")
     .update(
@@ -538,9 +629,11 @@ export function refreshAntigravityToken(
 async function refreshTokenUncached(
   credentials: OAuthCredentials,
   recovery: { profile: boolean; quota: boolean } = { profile: true, quota: true },
+  flight?: CredentialFlight,
 ): Promise<AntigravityOAuthCredentials> {
   if (!credentials.refresh?.trim())
     throw new OAuthRefreshError("Antigravity refresh token is required", true);
+  if (flight) assertCredentialFlight(flight);
   const stored = credentials as AntigravityOAuthCredentials;
   const officialId = atob(
     "MTA3MTAwNjA2MDU5MS10bWhzc2luMmgyMWxjcmUyMzV2dG9sb2poNGc0MDNlcC5hcHBzLmdvb2dsZXVzZXJjb250ZW50LmNvbQ==",
@@ -600,7 +693,20 @@ async function refreshTokenUncached(
         response.status < 500 &&
         ["invalid_grant", "invalid_client", "unauthorized_client", "access_denied"].includes(code);
       allPermanent &&= permanent;
-      message = `Antigravity token refresh failed: ${code.replace(/[^a-z_]/gi, "").slice(0, 60)} (HTTP ${response.status})`;
+      const publicCode = [
+        "invalid_request",
+        "invalid_client",
+        "invalid_grant",
+        "unauthorized_client",
+        "unsupported_grant_type",
+        "invalid_scope",
+        "access_denied",
+        "server_error",
+        "temporarily_unavailable",
+      ].includes(code)
+        ? code
+        : "unknown_oauth_error";
+      message = `Antigravity token refresh failed: ${publicCode} (HTTP ${response.status})`;
       if (
         response.status === 400 ||
         response.status === 401 ||
@@ -619,21 +725,23 @@ async function refreshTokenUncached(
     };
     if (!data.access_token?.trim() || !Number.isFinite(data.expires_in) || data.expires_in! <= 0)
       throw new OAuthRefreshError("OAuth server returned an invalid access token or expiry", false);
-    if (!legacyProfile())
-      return synchronizeAntigravityCredential(
-        {
-          ...stored,
-          refresh: data.refresh_token?.trim() || credentials.refresh,
-          access: data.access_token.trim(),
-          expires: Date.now() + data.expires_in! * 1000 - 5 * 60 * 1000,
-          oauthClientKey: candidate.key,
-          oauthClientId: candidate.id,
-          oauthClientSecret: candidate.secret,
-          idToken: data.id_token,
-          scope: data.scope || stored.scope,
-        },
-        { recovery, forceRebuildProject: !recovery.quota },
-      );
+    if (!legacyProfile()) {
+      if (!flight) throw new Error("Missing credential refresh flight");
+      const rotated: AntigravityOAuthCredentials = {
+        ...stored,
+        refresh: data.refresh_token?.trim() || credentials.refresh,
+        access: data.access_token.trim(),
+        expires: Date.now() + data.expires_in! * 1000 - 5 * 60 * 1000,
+        oauthClientKey: candidate.key,
+        oauthClientId: candidate.id,
+        oauthClientSecret: candidate.secret,
+        idToken: data.id_token,
+        scope: data.scope || stored.scope,
+      };
+      checkpointRotation(flight, rotated);
+      return validateCredential(flight.candidate, { recovery, forceRebuildProject: true, flight });
+    }
+
     const profile = legacyProfile()
       ? { email: credentialEmail(credentials) }
       : await getUserProfile(data.access_token);
@@ -666,18 +774,45 @@ async function refreshTokenUncached(
 /** Full one-shot identity -> quota catalog -> summary -> credit observation.
  * Each 401 stage recovers once. A quota-401 recovery drops ALL old identity-bound
  * observations/project before retry, even if the verified email stays equal. */
-export async function synchronizeAntigravityCredential(
+export function synchronizeAntigravityCredential(
+  credentials: AntigravityOAuthCredentials,
+  options: { signal?: AbortSignal; freshLogin?: boolean } = {},
+): Promise<AntigravityOAuthCredentials> {
+  let flight: CredentialFlight;
+  try {
+    if (!options.freshLogin) {
+      const key = credentialFlightKey(credentials),
+        pending = key && refreshing.get(key);
+      if (pending) return pending;
+    }
+    flight = beginCredentialFlight(credentials, options.freshLogin, true);
+  } catch (error) {
+    return Promise.reject(
+      error instanceof Error ? error : new Error("Antigravity checkpoint failed"),
+    );
+  }
+  return runCredentialFlight(flight, () =>
+    validateCredential(flight.candidate, {
+      signal: options.signal,
+      flight,
+      forceRebuildProject: true,
+    }),
+  );
+}
+async function validateCredential(
   credentials: AntigravityOAuthCredentials,
   options: {
     signal?: AbortSignal;
     recovery?: { profile: boolean; quota: boolean };
     forceRebuildProject?: boolean;
-  } = {},
+    flight: CredentialFlight;
+  },
 ): Promise<AntigravityOAuthCredentials> {
+  assertCredentialFlight(options.flight);
   const recovery = options.recovery ?? { profile: true, quota: true };
   options.signal?.throwIfAborted();
   if (!credentials.access || credentials.expires <= Date.now())
-    return refreshTokenUncached(credentials, recovery);
+    return refreshTokenUncached(credentials, recovery, options.flight);
   let profile;
   try {
     profile = await getUserProfile(credentials.access, options.signal);
@@ -688,31 +823,53 @@ export async function synchronizeAntigravityCredential(
       recovery.profile &&
       credentials.refresh
     )
-      return refreshTokenUncached(credentials, { ...recovery, profile: false });
+      return refreshTokenUncached(credentials, { ...recovery, profile: false }, options.flight);
     throw error;
   }
+  const priorSubject = options.flight.previousIdentity?.subject,
+    priorEmail = options.flight.previousIdentity?.email;
+  if (
+    (priorSubject && priorSubject !== profile.subject) ||
+    (!priorSubject && priorEmail && priorEmail.toLowerCase() !== profile.email?.toLowerCase())
+  )
+    throw new PrincipalTransitionError(
+      "Antigravity Google principal changed; fresh consent is required",
+    );
   const sameIdentity =
     !!credentials.email &&
     credentials.email.toLowerCase() === profile.email?.toLowerCase() &&
     !options.forceRebuildProject;
+  assertCredentialFlight(options.flight);
+  const previous = options.flight.previousIdentity;
+  const previousSamePrincipal = previous?.subject
+    ? previous.subject === profile.subject
+    : !!previous?.email && previous.email.toLowerCase() === profile.email?.toLowerCase();
   const identity = await provisionIdentity(credentials.access, {
     signal: options.signal,
-    preserveProjectId: sameIdentity ? credentials.projectId : undefined,
+    preserveProjectId: sameIdentity
+      ? credentials.projectId
+      : previousSamePrincipal && recovery.quota
+        ? previous?.projectId
+        : undefined,
   });
   const updated: AntigravityOAuthCredentials = {
     ...credentials,
     email: profile.email,
+    subject: profile.subject,
     identity,
     projectId: identity.projectId,
     quota: undefined,
   };
+  assertCredentialFlight(options.flight);
   try {
     updated.quota = await fetchQuotaSnapshot(credentials.access, identity.projectId, {
       signal: options.signal,
       previous:
         sameIdentity && credentials.projectId === identity.projectId
           ? credentials.quota
-          : undefined,
+          : previousSamePrincipal && previous?.projectId === identity.projectId
+            ? previous.quota
+            : undefined,
     });
   } catch (error) {
     if (
@@ -721,15 +878,18 @@ export async function synchronizeAntigravityCredential(
       recovery.quota &&
       credentials.refresh
     )
-      return refreshTokenUncached(updated, { ...recovery, quota: false });
+      return refreshTokenUncached(updated, { ...recovery, quota: false }, options.flight);
     throw error;
   }
   if (identity.entitlementsObserved === false)
     updated.quota?.warnings.push("entitlements_unavailable");
+  options.signal?.throwIfAborted();
+  promoteCheckpoint(options.flight, updated);
   return updated;
 }
 
 export function getApiKey(credentials: OAuthCredentials): string {
+  if (!legacyProfile()) credentials = validatedCredential(credentials);
   const email = credentialEmail(credentials);
   if (!legacyProfile() && !credentialProjectId(credentials))
     throw new Error("Antigravity has no provisioned project. Run /login antigravity.");

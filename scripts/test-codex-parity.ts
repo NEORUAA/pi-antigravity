@@ -35,7 +35,7 @@ function callback(url: string): Promise<number> {
   return new Promise((resolve, reject) => get(url, (response) => { response.resume(); response.on("end", () => resolve(response.statusCode ?? 0)); }).on("error", reject));
 }
 function tokenReply(token = "fixture-access") {
-  mock.get("https://oauth2.googleapis.com").intercept({ path: "/token", method: "POST", headers: { "user-agent": CODEX_USER_AGENT } }).reply(200, { access_token: token, refresh_token: "fixture-rotated", expires_in: 3600 });
+  mock.get("https://oauth2.googleapis.com").intercept({ path: "/token", method: "POST", headers: { "user-agent": CODEX_USER_AGENT } }).reply(200, { access_token: token, refresh_token: `fixture-rotated-${token}`, expires_in: 3600 });
 }
 function profileReply(verified = true) {
   mock.get("https://www.googleapis.com").intercept({ path: "/oauth2/v2/userinfo", method: "GET", headers: { "user-agent": CODEX_USER_AGENT } }).reply(200, { ...fixture.profile, verified_email: verified });
@@ -125,7 +125,7 @@ try {
     const previous = { access: "old", refresh: "parallel-fixture-refresh", expires: 0, projectId: "old-project", idToken: "old-id" };
     const results = await Promise.all(Array.from({ length: 8 }, () => refreshAntigravityToken(previous)));
     assert.deepEqual(loads, ["loadCodeAssist", "fetchAvailableModels", "retrieveUserQuotaSummary", "loadCodeAssist"]); assert.ok(results.every((result) => result === results[0]));
-    assert.equal(results[0].projectId, "new-identity-project"); assert.equal(results[0].refresh, "fixture-rotated"); assert.equal(results[0].idToken, undefined);
+    assert.equal(results[0].projectId, "new-identity-project"); assert.equal(results[0].refresh, "fixture-rotated-refreshed-fixture"); assert.equal(results[0].idToken, undefined);
   });
   await test("permanent structured OAuth error vs transient and retry cleanup", async () => {
     for (const [status, code, permanent] of [[400, "invalid_grant", true], [503, "server_error", false]] as const) {

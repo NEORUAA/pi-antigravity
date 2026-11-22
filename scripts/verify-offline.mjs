@@ -10,6 +10,10 @@ const environment = {
   NODE_OPTIONS: `--import=${resolve(root, "scripts/offline-guard.mjs")}`,
   ANTIGRAVITY_NO_PREWARM: "1", ANTIGRAVITY_COMPAT_PROFILE: "pi",
 };
+// Never let inherited personal OAuth configuration enter fixture stores.
+for (const key of Object.keys(environment)) if (/^(ANTIGRAVITY|NOAGY)_(CLIENT_ID|CLIENT_SECRET|OAUTH_CLIENTS|OAUTH_CLIENT_KEY|ACCESS_TOKEN|REFRESH_TOKEN|API_KEY)$/.test(key)) delete environment[key];
+environment.ANTIGRAVITY_CLIENT_ID="fixture-client.apps.googleusercontent.com";
+environment.ANTIGRAVITY_CLIENT_SECRET="fixture-public-client";
 // This runner never invokes live smoke/probe scripts, installation hooks, or audit network requests.
 const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
 let commands = [
@@ -22,7 +26,8 @@ const codexCommand = ["codex-default-contracts", process.execPath, ["scripts/run
 const differential = ["codex-reference-differential", process.execPath, ["scripts/run-ts.mjs", "scripts/test-codex-differential.ts"]];
 const application = ["codex-application-state-machines", process.execPath, ["scripts/run-ts.mjs", "scripts/test-codex-application.ts"]];
 const sync = ["codex-one-shot-sync", process.execPath, ["scripts/run-ts.mjs", "scripts/test-codex-sync.ts"]];
-commands = process.argv.includes("--codex-only") ? [codexCommand, differential, application, sync] : [...commands, codexCommand, differential, application, sync];
+const checkpoint = ["codex-durable-checkpoint", process.execPath, ["scripts/run-ts.mjs", "scripts/test-credential-checkpoint.ts"]];
+commands = process.argv.includes("--codex-only") ? [codexCommand, differential, application, sync, checkpoint] : [...commands, codexCommand, differential, application, sync, checkpoint];
 const results = [];
 for (const [name, executable, args] of commands) {
   const result = spawnSync(executable, args, { cwd: root, env: environment, encoding: "utf8", timeout: 120_000, maxBuffer: 8 * 1024 * 1024 });

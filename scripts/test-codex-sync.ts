@@ -19,7 +19,7 @@ const groups = [{ displayName: "fixtures", buckets: [{ bucketId: "3p-weekly", wi
 const defaults = (url: string) => url.endsWith("fetchAvailableModels") ? json({ models: { "claude-fixture": { quotaInfo: { remainingFraction: 0 } } } }) : url.endsWith("retrieveUserQuotaSummary") ? json({ groups }) : json({ paidTier: { availableCredits: [{ creditAmount: "12.5" }] } });
 let passed = 0;
 const test = async (name: string, run: () => Promise<void> | void) => { await run(); passed++; console.log(`PASS ${name}`); };
-function profile(token: string, email: string, status = 200) { mock.get("https://www.googleapis.com").intercept({ path: "/oauth2/v2/userinfo", method: "GET", headers: { authorization: `Bearer ${token}` } }).reply(status, { email, verified_email: true }); }
+function profile(token: string, email: string, status = 200) { mock.get("https://www.googleapis.com").intercept({ path: "/oauth2/v2/userinfo", method: "GET", headers: { authorization: `Bearer ${token}` } }).reply(status, { id:`subject:${email}`,email, verified_email: true }); }
 function refresh(token: string, rotated: string) { mock.get("https://oauth2.googleapis.com").intercept({ path: "/token", method: "POST" }).reply(200, { access_token: token, refresh_token: rotated, expires_in: 3600 }); }
 try {
   await test("source catalog sandbox/daily/production and per-endpoint 403 without-project retry", async () => {
@@ -85,9 +85,11 @@ try {
       if (method==="loadCodeAssist" && !(JSON.parse(String(init?.body)).metadata?.ide_name)) return json({cloudaicompanionProject:token.includes("old")?"old-project":"new-project"});
       if (method==="fetchAvailableModels" && token.includes("old")) return json({},401);
       return defaults(String(url)); }) as typeof fetch;
-    const q=await synchronizeAntigravityCredential({access:"old-access",refresh:"fixture-refresh-a",expires:Date.now()+3600_000,email:"old@example.invalid",projectId:"stale-project"});
+    await assert.rejects(synchronizeAntigravityCredential({access:"old-access",refresh:"fixture-refresh-a",expires:Date.now()+3600_000,email:"old@example.invalid",projectId:"stale-project"}), /principal changed/);
+    assert.deepEqual(seen.map(c=>c.slice(0,2)),[["Bearer old-access","loadCodeAssist"],["Bearer old-access","fetchAvailableModels"]]);
+    profile("new-access","new@example.invalid");
+    const q=await synchronizeAntigravityCredential({access:"new-access",refresh:"rotated-fixture",expires:Date.now()+3600_000},{freshLogin:true});
     assert.equal(q.email,"new@example.invalid");assert.equal(q.projectId,"new-project");assert.equal(q.refresh,"rotated-fixture");assert.ok(q.quota?.groupsObserved);
-    assert.deepEqual(seen.slice(0,4).map(c=>c.slice(0,2)),[["Bearer old-access","loadCodeAssist"],["Bearer old-access","fetchAvailableModels"],["Bearer new-access","loadCodeAssist"],["Bearer new-access","fetchAvailableModels"]]);
     assert.deepEqual(seen[3][2],{project:"new-project"});
   });
   await test("source profile401 recovers only once; second quota401 terminates without token-refresh loop", async () => {
@@ -121,14 +123,16 @@ try {
       rememberAccount({access:"delete-failed-access",refresh:"delete-failed-refresh",expires:0,email:"delete-failed@example.invalid",projectId:"project"});
       mock.get("https://oauth2.googleapis.com").intercept({path:"/token",method:"POST"}).reply(400,{error:"invalid_grant"}).delay(20);
       const failed=failoverToNextAccount(new Set(),"claude-fixture");
+      await new Promise(resolve=>setImmediate(resolve));
       await removeAccount("delete-failed@example.invalid");
       assert.equal(await failed,undefined);assert.equal(Object.keys(loadAccountStore().accounts).length,0);
       rememberAccount({access:"delete-success-old",refresh:"delete-success-refresh",expires:0,email:"delete-success@example.invalid",projectId:"project"});
       mock.get("https://oauth2.googleapis.com").intercept({path:"/token",method:"POST"}).reply(200,{access_token:"delete-success-new",expires_in:3600}).delay(20);
-      profile("delete-success-new","delete-success@example.invalid");
+
       globalThis.fetch=(async (url,init)=>String(url).endsWith("loadCodeAssist")&&!JSON.parse(String(init?.body)).metadata?.ide_name?json({cloudaicompanionProject:"project"}):defaults(String(url))) as typeof fetch;
       const activation=activateAccount("delete-success@example.invalid");
-      const rejected=assert.rejects(activation,/removed during activation/);
+      const rejected=assert.rejects(activation,/removed during activation|superseded/);
+      await new Promise(resolve=>setImmediate(resolve));
       await removeAccount("delete-success@example.invalid");await rejected;
       assert.equal(Object.keys(loadAccountStore().accounts).length,0);
     } finally { process.env.PI_CODING_AGENT_DIR=oldDir; }

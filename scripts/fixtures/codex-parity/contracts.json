@@ -6,6 +6,6 @@
   "loadPending": {"cloudaicompanionProject":"","allowedTiers":[{"id":"free-tier","isDefault":true}]},
   "onboardPending": {"done":false},
   "onboardDone": {"done":true,"response":{"cloudaicompanionProject":{"id":"fixture-project"}}},
-  "profile": {"email":"fixture@example.invalid","verified_email":true},
+  "profile": {"id":"fixture-google-subject","email":"fixture@example.invalid","verified_email":true},
   "generation": {"response":{"candidates":[{"content":{"parts":[{"text":"fixture output"}]},"finishReason":"STOP"}]}}
 }

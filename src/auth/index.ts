@@ -19,6 +19,7 @@ export {
   failoverToNextAccount,
   listAccounts,
   rememberAccount,
+  recoverPendingActiveAccount,
   removeAccount,
   updateRememberedAccount,
 } from "./accounts.js";

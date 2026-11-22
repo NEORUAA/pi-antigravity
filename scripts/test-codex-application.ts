@@ -127,9 +127,10 @@ try {
       for (const remove of [false, true]) {
         fresh(); account();
         mock.get("https://oauth2.googleapis.com").intercept({ path: "/token", method: "POST" }).reply(200, { access_token: "fixture-refreshed", refresh_token: "fixture-rotated", expires_in: 3600 }).delay(20);
-        mock.get("https://www.googleapis.com").intercept({ path: "/oauth2/v2/userinfo", method: "GET" }).reply(200, { email: "a@example.invalid", verified_email: true, id: "fixture-id" });
+        if (!remove) mock.get("https://www.googleapis.com").intercept({ path: "/oauth2/v2/userinfo", method: "GET" }).reply(200, { email: "a@example.invalid", verified_email: true, id: "fixture-id" });
         globalThis.fetch = (async () => json({ cloudaicompanionProject: "project-a" })) as typeof fetch;
         const pending = refreshAccountAfterUnauthorized("fixture-a");
+        if (remove) await new Promise(resolve=>setImmediate(resolve));
         if (remove) await removeAccount("a@example.invalid"); else markAccountHealth("fixture-a", "gemini-a", { block: "TOS_VIOLATION" });
         const refreshed = await pending;
         if (remove) { assert.equal(refreshed, undefined); assert.equal(Object.keys(loadAccountStore().accounts).length, 0); }

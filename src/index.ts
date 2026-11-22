@@ -15,6 +15,7 @@ import {
   listAccounts,
   loginAntigravity,
   rememberAccount,
+  recoverPendingActiveAccount,
   refreshAntigravityToken,
   removeAccount,
   updateRememberedAccount,
@@ -170,6 +171,15 @@ export default function (pi: ExtensionAPI): void {
   // headless process hydrates Gemini 4 from the persisted store (#93).
   pi.on("session_start", async (_event, ctx) => {
     if (process.env.PI_OFFLINE !== undefined) return;
+    try {
+      await recoverPendingActiveAccount();
+    } catch {
+      if (ctx.hasUI)
+        ctx.ui.notify(
+          "Antigravity identity recovery is pending; retry account switch or re-login if revoked.",
+          "warning",
+        );
+    }
     if (typeof ctx.modelRegistry?.refresh !== "function") return;
     try {
       const refresh = ctx.modelRegistry.refresh({ providers: [PROVIDER_ID] });
