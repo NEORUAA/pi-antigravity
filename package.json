@@ -6,11 +6,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Rahularya01/pi-antigravity.git"
+    "url": "git+https://github.com/NEORUAA/pi-antigravity.git"
   },
-  "homepage": "https://github.com/Rahularya01/pi-antigravity#readme",
+  "homepage": "https://github.com/NEORUAA/pi-antigravity",
   "bugs": {
-    "url": "https://github.com/Rahularya01/pi-antigravity/issues"
+    "url": "https://github.com/NEORUAA/pi-antigravity/issues"
   },
   "type": "module",
   "main": "./src/index.ts",
@@ -40,12 +40,14 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "security-check": "node scripts/run-ts.mjs scripts/security-check.ts",
-    "test": "node scripts/run-ts.mjs scripts/test-sanitize-text.ts && node scripts/run-ts.mjs scripts/test-model-routing.ts && node scripts/run-ts.mjs scripts/test-model-discovery.ts && node scripts/run-ts.mjs scripts/test-usage-formatter.ts && node scripts/run-ts.mjs scripts/test-model-pricing.ts && node scripts/run-ts.mjs scripts/test-stream-sse.ts && node scripts/run-ts.mjs scripts/test-stream-header-deadline.ts && node scripts/run-ts.mjs scripts/test-http-proxy.ts && node scripts/run-ts.mjs scripts/test-oauth-fetch.ts && node scripts/run-ts.mjs scripts/test-image-gen.ts && node scripts/run-ts.mjs scripts/test-native-images.ts && node scripts/run-ts.mjs scripts/test-transcript-context.ts && node scripts/run-ts.mjs scripts/test-inline-system.ts && node scripts/run-ts.mjs scripts/test-accounts.ts && node scripts/run-ts.mjs scripts/test-search.ts && node scripts/run-ts.mjs scripts/test-search-citations.ts && node scripts/run-ts.mjs scripts/test-web-fetch.ts && node scripts/run-ts.mjs scripts/test-reader-foundations.ts && node scripts/run-ts.mjs scripts/test-extra-tools-toggle.ts && node scripts/run-ts.mjs scripts/test-fetch-tool-toggle.ts && node scripts/run-ts.mjs scripts/test-provider-registration.ts && node scripts/run-ts.mjs scripts/test-stream-recovery.ts && node scripts/run-ts.mjs scripts/test-capacity-retry.ts && node scripts/run-ts.mjs scripts/test-enterprise-and-capacity.ts",
+    "test": "node scripts/verify-offline.mjs",
     "smoke:fetch": "node scripts/run-ts.mjs scripts/smoke-web-fetch.mjs",
     "smoke:tools": "node scripts/run-ts.mjs scripts/smoke-tool-schema.ts",
     "smoke:models": "node scripts/run-ts.mjs scripts/smoke-all-models.mjs",
     "audit": "yarn npm audit --environment production --recursive && yarn npm audit --severity high --all --recursive",
-    "check": "yarn typecheck && yarn lint && yarn format:check && yarn security-check && yarn test && yarn audit"
+    "check": "yarn typecheck && yarn lint && yarn format:check && yarn security-check && yarn test && yarn audit",
+    "test:legacy": "node scripts/run-ts.mjs scripts/test-sanitize-text.ts && node scripts/run-ts.mjs scripts/test-model-routing.ts && node scripts/run-ts.mjs scripts/test-model-discovery.ts && node scripts/run-ts.mjs scripts/test-usage-formatter.ts && node scripts/run-ts.mjs scripts/test-model-pricing.ts && node scripts/run-ts.mjs scripts/test-stream-sse.ts && node scripts/run-ts.mjs scripts/test-stream-header-deadline.ts && node scripts/run-ts.mjs scripts/test-http-proxy.ts && node scripts/run-ts.mjs scripts/test-oauth-fetch.ts && node scripts/run-ts.mjs scripts/test-image-gen.ts && node scripts/run-ts.mjs scripts/test-native-images.ts && node scripts/run-ts.mjs scripts/test-transcript-context.ts && node scripts/run-ts.mjs scripts/test-inline-system.ts && node scripts/run-ts.mjs scripts/test-accounts.ts && node scripts/run-ts.mjs scripts/test-search.ts && node scripts/run-ts.mjs scripts/test-search-citations.ts && node scripts/run-ts.mjs scripts/test-web-fetch.ts && node scripts/run-ts.mjs scripts/test-reader-foundations.ts && node scripts/run-ts.mjs scripts/test-extra-tools-toggle.ts && node scripts/run-ts.mjs scripts/test-fetch-tool-toggle.ts && node scripts/run-ts.mjs scripts/test-provider-registration.ts && node scripts/run-ts.mjs scripts/test-stream-recovery.ts && node scripts/run-ts.mjs scripts/test-capacity-retry.ts && node scripts/run-ts.mjs scripts/test-enterprise-and-capacity.ts",
+    "test:codex": "node scripts/verify-offline.mjs --codex-only"
   },
   "pi": {
     "extensions": [
@@ -83,5 +85,6 @@
   "resolutions": {
     "undici": "8.12.4",
     "minimatch": "11.0.3"
-  }
+  },
+  "private": true
 }

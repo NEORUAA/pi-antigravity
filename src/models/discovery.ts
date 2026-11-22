@@ -1,3 +1,4 @@
+import { legacyProfile } from "../compat/profile.js";
 import { createHash } from "node:crypto";
 import type {
   Api,
@@ -78,9 +79,11 @@ export async function discoverAntigravityModels(
 export async function refreshAntigravityModels(
   context: RefreshModelsContext,
 ): Promise<AntigravityModelConfig[]> {
-  const checkedAt = hydrateAntigravityCatalog(context.stored);
+  const discoveryEnabled =
+    legacyProfile() || antigravityEnv("DYNAMIC_DISCOVERY") === "1" || context.force;
+  const checkedAt = discoveryEnabled ? hydrateAntigravityCatalog(context.stored) : 0;
   const current = getCurrentAntigravityCatalog();
-  if (!context.allowNetwork) return current.models;
+  if (!context.allowNetwork || !discoveryEnabled) return current.models;
 
   const apiKey = apiKeyFromCredential(context.credential);
   if (!apiKey || context.signal.aborted) return current.models;

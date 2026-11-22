@@ -1,3 +1,12 @@
+import { consumerEvents } from "../client/consumer-sse.js";
+import { legacyProfile, codexSessionId, codexRequestId } from "../compat/profile.js";
+import {
+  executeCodexGeneration,
+  GenerationHTTPError,
+  observeConsumerDocument,
+  readConsumerJson,
+} from "../client/codex-transport.js";
+import { consumerFetch } from "../client/consumer-fetch.js";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, mkdir, open, realpath } from "node:fs/promises";
@@ -229,8 +238,23 @@ function collectImagesFromParts(
 export async function collectImagesFromSse(
   response: Response,
   signal?: AbortSignal,
+  observeError?: (document: unknown) => void,
 ): Promise<{ images: GeneratedImage[]; text: string[] }> {
   if (!response.body) throw new Error("No response body");
+  if (!legacyProfile()) {
+    const images: GeneratedImage[] = [],
+      text: string[] = [];
+    for await (const document of consumerEvents(response, 32 * 1024 * 1024)) {
+      signal?.throwIfAborted();
+      observeError?.(document);
+      const chunk = document as ImageStreamChunk;
+      if (chunk.response && "error" in chunk.response) observeError?.(chunk.response);
+      const parsed = parseImageResponse(chunk);
+      images.push(...parsed.images);
+      text.push(...parsed.text);
+    }
+    return { images, text };
+  }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -255,6 +279,7 @@ export async function collectImagesFromSse(
         } catch {
           continue;
         }
+        observeError?.(chunk);
         if (chunk.error?.message) throw new Error(chunk.error.message);
         const responseData = chunk.response || chunk;
         for (const candidate of responseData.candidates || []) {
@@ -359,6 +384,63 @@ export async function generateAntigravityImageContent(
   const preferred = assertSafeImageModel(options.model || DEFAULT_IMAGE_MODEL);
   const models = [preferred, ...IMAGE_MODEL_FALLBACKS.filter((id) => id !== preferred)];
   const creds = parseApiKey(options.apiKey);
+  if (!legacyProfile()) {
+    let lastError: Error | undefined;
+    for (const model of models) {
+      let account = creds;
+      const payload = buildImageGenerateRequest(
+        prompt,
+        model,
+        creds.projectId,
+        aspectRatio,
+        options.inputImages,
+      );
+      payload.requestId = codexRequestId();
+      const request = payload.request as typeof payload.request & { sessionId: string };
+      request.sessionId = codexSessionId(request.contents);
+      let response: Response;
+      let streaming = false;
+      try {
+        const dispatch = (method: "generateContent" | "streamGenerateContent") =>
+          executeCodexGeneration({
+            credentials: account,
+            model,
+            method,
+            signal: options.signal,
+            onAccount: (next) => {
+              account = next;
+            },
+            build: (project) => ({ ...payload, project }),
+            send: consumerFetch,
+          });
+        try {
+          response = await dispatch("generateContent");
+        } catch (error) {
+          if (!(error instanceof GenerationHTTPError) || error.status !== 404) throw error;
+          response = await dispatch("streamGenerateContent");
+          streaming = true;
+        }
+      } catch (error) {
+        if (!(error instanceof GenerationHTTPError) || error.status !== 404) throw error;
+        lastError = error;
+        continue;
+      }
+      // Parsing and internal errors are outside the dispatch/model fallback catch. No duplicate generation.
+      const observer = (document: unknown) =>
+        observeConsumerDocument(account.token, model, document);
+      const parsed = streaming
+        ? await collectImagesFromSse(response, options.signal, observer)
+        : await (async () => {
+            const document = await readConsumerJson(response);
+            observer(document);
+            return parseImageResponse(document as ImageStreamChunk);
+          })();
+      if (!parsed.images.length)
+        throw new Error(parsed.text.join(" ").trim() || "No image data returned.");
+      return { images: parsed.images, text: parsed.text, model };
+    }
+    throw lastError ?? new Error("No image model available");
+  }
   const headers = antigravityHeaders(creds.token);
 
   let lastError = "no endpoint available";

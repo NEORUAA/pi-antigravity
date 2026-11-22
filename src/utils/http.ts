@@ -1,3 +1,4 @@
+import { legacyProfile } from "../compat/profile.js";
 import { antigravityEnv } from "./util.js";
 
 /**
@@ -78,7 +79,7 @@ export async function antigravityFetch(
  * Best-effort: failures are ignored. Subsequent calls are no-ops.
  */
 export function prewarmConnection(url: string): void {
-  if (antigravityEnv("NO_PREWARM") === "1") return;
+  if (!legacyProfile() || antigravityEnv("NO_PREWARM") === "1") return;
   if (prewarmStarted) return;
   prewarmStarted = true;
   void (async () => {

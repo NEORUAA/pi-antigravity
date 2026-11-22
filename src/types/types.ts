@@ -1,3 +1,5 @@
+import type { QuotaSnapshot } from "../auth/quota-snapshot.js";
+import type { IdentityContext } from "../auth/control-plane.js";
 import type { Server } from "node:http";
 import type {
   OAuthCredentials,
@@ -13,6 +15,15 @@ import type { GeminiRole, GeminiToolCallingMode, ThinkingEffort, ToolChoice } fr
 export type AntigravityOAuthCredentials = OAuthCredentials & {
   projectId?: string;
   email?: string;
+  /** Verified Google userinfo ID, never decoded ID-token claims. */
+  subject?: string;
+  identity?: IdentityContext;
+  quota?: QuotaSnapshot;
+  oauthClientKey?: string;
+  oauthClientId?: string;
+  oauthClientSecret?: string;
+  idToken?: string;
+  scope?: string;
 };
 
 export type AntigravityApiKey = {
@@ -30,6 +41,7 @@ export type DynamicModelInfo = {
 
 export type CallbackServer = {
   server: Server;
+  redirectUri?: string;
   waitForCode: () => Promise<{ code: string; state: string }>;
   cleanup: () => void;
 };
@@ -66,11 +78,13 @@ export type GeminiFunctionCallPart = {
     id?: string;
   };
   thoughtSignature?: string;
+  thought_signature?: string;
 };
 export type GeminiFunctionResponsePart = {
   functionResponse: {
     name: string;
     response: { error: string } | { output: string };
+    parts?: GeminiInlineDataPart[];
     id?: string;
   };
 };
@@ -107,7 +121,8 @@ export type ThinkingWire = {
 export type GeminiGenerationConfig = {
   temperature?: number;
   maxOutputTokens?: number;
-  thinkingConfig?: ThinkingWire;
+  thinkingConfig?:
+    ThinkingWire | { thinkingLevel?: string; thinkingBudget?: number; includeThoughts?: boolean };
 };
 
 export type GeminiRequestBody = {

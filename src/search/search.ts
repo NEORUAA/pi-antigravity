@@ -1,3 +1,11 @@
+import { legacyProfile, codexSessionId, codexRequestId } from "../compat/profile.js";
+import {
+  executeCodexGeneration,
+  GenerationHTTPError,
+  observeConsumerDocument,
+  readConsumerJson,
+} from "../client/codex-transport.js";
+import { consumerFetch } from "../client/consumer-fetch.js";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 
@@ -601,7 +609,10 @@ async function fetchPageTitle(url: string, signal?: AbortSignal): Promise<string
  * extra request per source.
  */
 async function enrichSources(sources: SearchSource[], signal?: AbortSignal): Promise<void> {
-  if (antigravityEnv("NO_SOURCE_ENRICH") === "1") {
+  if (
+    antigravityEnv("NO_SOURCE_ENRICH") === "1" ||
+    (!legacyProfile() && antigravityEnv("SOURCE_ENRICH") !== "1")
+  ) {
     for (const source of sources) source.label = sourceLabel(source);
     return;
   }
@@ -905,6 +916,47 @@ export async function executeAntigravitySearch(options: ExecuteSearchOptions): P
   if (!query) throw new Error("Search query is required.");
 
   const creds = parseApiKey(options.apiKey);
+  if (!legacyProfile()) {
+    let lastError: Error | undefined;
+    for (const model of SEARCH_MODEL_FALLBACKS) {
+      let account = creds;
+      try {
+        const payload = buildSearchRequest(options, model, creds.projectId);
+        payload.requestId = codexRequestId();
+        const request = payload.request as { contents: unknown[]; sessionId: string };
+        request.sessionId = codexSessionId(request.contents);
+        const response = await executeCodexGeneration({
+          credentials: creds,
+          model,
+          method: "generateContent",
+          signal: options.signal,
+          onAccount: (next) => {
+            account = next;
+          },
+          build: (project) => ({ ...payload, project }),
+          send: consumerFetch,
+        });
+        const data = await readConsumerJson(response, 8 * 1024 * 1024);
+        observeConsumerDocument(account.token, model, data);
+        const parsed = parseSearchResponse(data);
+        await enrichSources(parsed.sources, options.signal);
+        return formatSearchResult(parsed);
+      } catch (error) {
+        // Only a pre-body model rejection can select a different model. Never replay a 200 error document.
+        if (
+          !(error instanceof GenerationHTTPError) ||
+          error.fromBody ||
+          !(
+            error.status === 404 ||
+            (error.status === 400 && /invalid argument|thinking/i.test(error.body))
+          )
+        )
+          throw error;
+        lastError = error;
+      }
+    }
+    throw lastError ?? new Error("No search model available");
+  }
   const headers = antigravityHeaders(creds.token);
 
   let lastError = "no endpoint available";

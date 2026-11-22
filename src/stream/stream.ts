@@ -1,3 +1,22 @@
+import { consumerEvents } from "../client/consumer-sse.js";
+import {
+  fetchWithHeaderDeadline,
+  streamHeaderTimeoutMs,
+  streamStallTimeoutMs,
+} from "../client/consumer-fetch.js";
+export {
+  fetchWithHeaderDeadline,
+  streamHeaderTimeoutMs,
+  streamStallTimeoutMs,
+} from "../client/consumer-fetch.js";
+import { resolveCodexModel, codexThinking } from "../compat/catalog.js";
+import { normalizeCodexRequest } from "../compat/request.js";
+import { legacyProfile, codexSessionId, codexRequestId } from "../compat/profile.js";
+import {
+  executeCodexGeneration,
+  GenerationHTTPError,
+  observeConsumerDocument,
+} from "../client/codex-transport.js";
 import {
   calculateCost,
   createAssistantMessageEventStream,
@@ -88,7 +107,7 @@ import {
   sanitizeText,
 } from "../utils/util.js";
 import { isCreditsEnabled } from "../utils/credits.js";
-import { antigravityFetch, prewarmConnection } from "../utils/http.js";
+import { prewarmConnection } from "../utils/http.js";
 
 export { ANTIGRAVITY_API };
 
@@ -346,7 +365,7 @@ function convertMessagesWithMetadata(
 ): { contents: GeminiContent[]; hasDegradedToolObservations: boolean } {
   const contents: GeminiContent[] = [];
   let hasDegradedToolObservations = false;
-  const requiresSig = geminiRequiresThoughtSignature(runtimeModel);
+  const requiresSig = legacyProfile() && geminiRequiresThoughtSignature(runtimeModel);
   const droppedToolCallIds = new Map<string, string>();
   const droppedEmptyToolCalls = new Map<string, string[]>();
   for (const msg of context.messages) {
@@ -489,7 +508,8 @@ function convertMessagesWithMetadata(
               : {}),
           },
         };
-        appendTurn(contents, GeminiRole.User, [part, ...imageParts]);
+        if (!legacyProfile() && imageParts.length) part.functionResponse.parts = imageParts;
+        appendTurn(contents, GeminiRole.User, legacyProfile() ? [part, ...imageParts] : [part]);
       }
     }
   }
@@ -1080,7 +1100,7 @@ export function isInlineSystemEnabled(): boolean {
 export function shouldInlineSystem(systemParts: { text: string }[]): boolean {
   const preference = inlineSystemPreference();
   if (preference === "on") return true;
-  if (preference === "off") return false;
+  if (preference === "off" || !legacyProfile()) return false;
   const totalLength = systemParts.reduce((sum, part) => sum + part.text.length, 0);
   return totalLength > SYSTEM_INSTRUCTION_PART_LIMIT;
 }
@@ -1116,21 +1136,26 @@ export function buildRequest(
   projectId: string,
   options: AntigravityStreamOptions,
   runtimeModel: string,
+  deferCodexNormalization = false,
 ): AntigravityGenerateRequest {
   const injectedSkills = context.messages.flatMap((msg) =>
     msg.role === "user" ? skillBlocks(msg.content) : [],
   );
   const rawSystemPromptText = resolveCurrentSystemPrompt(context);
   const systemPromptText = rawSystemPromptText
-    ? sanitizeSystemPrompt(rawSystemPromptText)
+    ? legacyProfile()
+      ? sanitizeSystemPrompt(rawSystemPromptText)
+      : rawSystemPromptText
     : undefined;
   const declaredTools = resolveCurrentTools(context);
   const systemParts = systemPromptText
     ? [{ text: sanitizeText(systemPromptText) }]
-    : [
-        { text: sanitizeSystemPrompt(ANTIGRAVITY_SYSTEM_INSTRUCTION) },
-        { text: ANTIGRAVITY_NO_PREAMBLE_INSTRUCTION },
-      ];
+    : legacyProfile()
+      ? [
+          { text: sanitizeSystemPrompt(ANTIGRAVITY_SYSTEM_INSTRUCTION) },
+          { text: ANTIGRAVITY_NO_PREAMBLE_INSTRUCTION },
+        ]
+      : [];
   systemParts.push(...injectedSkills.map((skill) => ({ text: sanitizeText(skill) })));
 
   const { contents, hasDegradedToolObservations } = convertMessagesWithMetadata(
@@ -1167,7 +1192,7 @@ export function buildRequest(
   // explicitly forced (see shouldInlineSystem). Otherwise keep wire-native shape.
   if (shouldInlineSystem(systemParts)) {
     inlineSystemInstruction(contents, systemParts, injectedPlaceholderTurn);
-  } else {
+  } else if (systemParts.length) {
     request.systemInstruction = {
       role: GeminiRole.User,
       parts: systemParts,
@@ -1176,7 +1201,9 @@ export function buildRequest(
 
   const generationConfig: GeminiGenerationConfig = {};
   if (options.temperature !== undefined) generationConfig.temperature = options.temperature;
-  const thinking = getThinkingConfig(runtimeModel, options.reasoning ?? "off");
+  const thinking = legacyProfile()
+    ? getThinkingConfig(runtimeModel, options.reasoning ?? "off")
+    : codexThinking(model.id, runtimeModel, options.reasoning);
   if (thinking) generationConfig.thinkingConfig = thinking;
   const maxAllowed = getMaxOutputTokens(model.id, runtimeModel);
   if (options.maxTokens !== undefined) {
@@ -1187,7 +1214,10 @@ export function buildRequest(
   if (Object.keys(generationConfig).length) request.generationConfig = generationConfig;
 
   const isClaude = model.id.startsWith("claude-") || runtimeModel.startsWith("claude-");
-  const tools = convertTools(declaredTools, isClaude || model.id.startsWith("gpt-oss-"));
+  const tools = convertTools(
+    declaredTools,
+    legacyProfile() && (isClaude || model.id.startsWith("gpt-oss-")),
+  );
   if (tools) {
     request.tools = tools;
   }
@@ -1232,8 +1262,19 @@ export function buildRequest(
     trajectoryId,
     sessionId,
   });
-  request.sessionId = envelope.sessionId;
-  request.labels = envelope.labels;
+  request.sessionId = legacyProfile()
+    ? envelope.sessionId
+    : codexSessionId(request.contents, options.sessionId);
+  if (legacyProfile()) request.labels = envelope.labels;
+  if (!legacyProfile() && runtimeModel.startsWith("gemini-"))
+    delete request.generationConfig?.maxOutputTokens;
+  if (
+    !legacyProfile() &&
+    isClaude &&
+    request.toolConfig?.functionCallingConfig.mode === GeminiToolCallingMode.Any
+  ) {
+    delete request.toolConfig;
+  }
 
   const generateRequest: AntigravityGenerateRequest = {
     project: projectId,
@@ -1241,12 +1282,16 @@ export function buildRequest(
     request,
     requestType: AntigravityRequestType.Agent,
     userAgent: AntigravityUserAgent.Antigravity,
-    requestId: envelope.requestId,
+    requestId: legacyProfile() ? envelope.requestId : codexRequestId(),
   };
   if (isCreditsEnabled()) {
     generateRequest.enabledCreditTypes = ["GOOGLE_ONE_AI"];
   }
 
+  if (!legacyProfile() && !deferCodexNormalization) {
+    normalizeCodexRequest(request, runtimeModel);
+    request.sessionId = codexSessionId(request.contents, options.sessionId);
+  }
   return generateRequest;
 }
 
@@ -1427,38 +1472,6 @@ function asToolCallArguments(args: Record<string, unknown> | undefined): ToolCal
   return (args ?? {}) as ToolCall["arguments"];
 }
 
-/** Default response-header deadline for streaming requests (see fetchWithHeaderDeadline). */
-const STREAM_HEADER_TIMEOUT_DEFAULT_MS = 180_000;
-/** Default mid-body stall deadline: abort when no SSE bytes arrive for this long. */
-const STREAM_STALL_TIMEOUT_DEFAULT_MS = 300_000;
-
-function envTimeoutMs(name: string, fallback: number): number {
-  const raw = antigravityEnv(name);
-  if (!raw || !/^\d+$/.test(raw)) return fallback;
-  const value = Number(raw);
-  return Number.isSafeInteger(value) ? value : fallback;
-}
-
-/**
- * Streaming header deadline in milliseconds, from ANTIGRAVITY_STREAM_HEADER_TIMEOUT_MS
- * (or the legacy NOAGY_ prefix). 0 disables the deadline; invalid values fall back
- * to the default.
- */
-export function streamHeaderTimeoutMs(): number {
-  return envTimeoutMs("STREAM_HEADER_TIMEOUT_MS", STREAM_HEADER_TIMEOUT_DEFAULT_MS);
-}
-
-/**
- * Mid-body stall deadline in milliseconds, from ANTIGRAVITY_STREAM_STALL_TIMEOUT_MS
- * (legacy NOAGY_ prefix honored). 0 disables. A healthy SSE stream emits bytes
- * continuously while generating, so a silent gap this long means the connection
- * is dead even though headers arrived — abort with a named error rather than
- * hanging until an external process timeout.
- */
-export function streamStallTimeoutMs(): number {
-  return envTimeoutMs("STREAM_STALL_TIMEOUT_MS", STREAM_STALL_TIMEOUT_DEFAULT_MS);
-}
-
 /**
  * Backoff ladder for transient capacity refusals, in milliseconds. Consumer
  * endpoints answer generic `429 RESOURCE_EXHAUSTED` (no reset hint) and
@@ -1515,129 +1528,6 @@ function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-function stallError(stallMs: number): Error {
-  // "timed out" is deliberate: pi's retryable provider-error pattern matches
-  // it, so a mid-body stall auto-retries instead of dying as a terminal error.
-  return new Error(`stream stalled: no data for ${stallMs}ms (timed out)`);
-}
-
-/**
- * Guard a response body against mid-stream stalls while retaining caller
- * cancellation until the body finishes or is cancelled. The wrapper reads only
- * when its consumer pulls, preserving backpressure; its timer is unref'd so an
- * armed deadline cannot keep the process alive.
- */
-function guardResponseBody(
-  response: Response,
-  controller: AbortController,
-  stallMs: number,
-  cleanup: () => void,
-): Response {
-  if (!response.body) {
-    cleanup();
-    return response;
-  }
-  const reader = response.body.getReader();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let finished = false;
-  const finish = () => {
-    if (finished) return;
-    finished = true;
-    if (timer) clearTimeout(timer);
-    cleanup();
-  };
-  const reset = () => {
-    if (stallMs <= 0) return;
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(() => controller.abort(stallError(stallMs)), stallMs);
-  };
-  let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
-  const abortBody = () => {
-    streamController?.error(controller.signal.reason);
-    void reader.cancel(controller.signal.reason).catch(() => undefined);
-    finish();
-  };
-  controller.signal.addEventListener("abort", abortBody, { once: true });
-  reset();
-  const guarded = new ReadableStream<Uint8Array>({
-    start(controller) {
-      streamController = controller;
-    },
-    async pull(streamController) {
-      try {
-        const chunk = await reader.read();
-        if (chunk.done) {
-          finish();
-          streamController.close();
-          return;
-        }
-        if (!(chunk.value instanceof Uint8Array)) {
-          throw new Error("Response body yielded an invalid chunk");
-        }
-        reset();
-        streamController.enqueue(chunk.value);
-      } catch (error) {
-        finish();
-        streamController.error(error);
-      }
-    },
-    async cancel(reason) {
-      finish();
-      await reader.cancel(reason);
-    },
-  });
-  return new Response(guarded, response);
-}
-
-/**
- * Fetch with a response-header deadline and a mid-body stall watchdog. A server
- * can accept a request on a warm keep-alive socket and then never send response
- * headers (header phase), or send headers and then go silent mid-body (stall
- * phase); either way the request is aborted with a named error instead of
- * hanging until an external process timeout. Long healthy responses are never
- * cut: the header timer disarms once headers arrive, and the stall timer resets
- * on every chunk, so only genuine silence aborts.
- *
- * Exported with an injectable fetch for unit tests.
- */
-export async function fetchWithHeaderDeadline(
-  url: string,
-  init: RequestInit,
-  callerSignal: AbortSignal | undefined,
-  timeoutMs: number,
-  stallMs: number = 0,
-  fetchFn: (input: string, init: RequestInit) => Promise<Response> = antigravityFetch,
-): Promise<Response> {
-  if (timeoutMs <= 0 && stallMs <= 0) {
-    return fetchFn(url, { ...init, signal: callerSignal ?? init.signal });
-  }
-  const controller = new AbortController();
-  const forward = () => controller.abort(callerSignal?.reason);
-  const cleanup = () => callerSignal?.removeEventListener("abort", forward);
-  callerSignal?.addEventListener("abort", forward, { once: true });
-  if (callerSignal?.aborted) forward();
-  const timer =
-    timeoutMs > 0
-      ? setTimeout(
-          () =>
-            controller.abort(
-              // "timed out" keeps the message on pi's retryable-error list (see stallError).
-              new Error(`no response headers within ${timeoutMs}ms (timed out)`),
-            ),
-          timeoutMs,
-        )
-      : undefined;
-  let responseBodyGuarded = false;
-  try {
-    const response = await fetchFn(url, { ...init, signal: controller.signal });
-    responseBodyGuarded = Boolean(response.body);
-    return guardResponseBody(response, controller, stallMs, cleanup);
-  } finally {
-    if (timer) clearTimeout(timer);
-    if (!responseBodyGuarded) cleanup();
-  }
-}
-
 /** Exported for unit tests. */
 
 export async function streamResponse(
@@ -1645,9 +1535,11 @@ export async function streamResponse(
   stream: AssistantMessageEventStream,
   output: AssistantMessage,
   model?: Model<Api>,
+  reverseNames: Record<string, string> = {},
+  observeError?: (document: unknown) => void,
 ): Promise<boolean> {
   if (!response.body) throw new Error("No response body");
-  const reader = response.body.getReader();
+  const reader = legacyProfile() ? response.body.getReader() : undefined;
   const decoder = new TextDecoder();
   let buffer = "";
   // Consumed-prefix offset: the buffer is compacted once per network chunk instead of
@@ -1665,6 +1557,8 @@ export async function streamResponse(
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith(":")) return;
     stray = stray ? `${stray}\n${trimmed}` : trimmed;
+    if (!legacyProfile() && Buffer.byteLength(stray) > 1024 * 1024)
+      throw new Error("Antigravity stray SSE error exceeds 1 MiB");
     const start = stray.indexOf("{");
     if (start < 0) return;
     let parsed: unknown;
@@ -1674,6 +1568,7 @@ export async function streamResponse(
       return;
     }
     if (!parsed || typeof parsed !== "object" || !("error" in parsed)) return;
+    observeError?.(parsed);
     const record = parsed as { error?: { code?: unknown; message?: unknown } };
     const status = typeof record.error?.code === "number" ? record.error.code : undefined;
     if (status !== undefined) setLastStatus(status);
@@ -1693,9 +1588,13 @@ export async function streamResponse(
     try {
       chunk = JSON.parse(json) as StreamChunk;
     } catch {
+      if (!legacyProfile()) throw new Error("Invalid Antigravity SSE JSON event");
       return;
     }
 
+    if (Object.hasOwn(chunk, "error") || (chunk.response && "error" in chunk.response)) {
+      observeError?.(chunk.error ? chunk : chunk.response);
+    }
     if (chunk.error) {
       const status = typeof chunk.error.code === "number" ? chunk.error.code : undefined;
       if (status !== undefined) setLastStatus(status);
@@ -1708,6 +1607,32 @@ export async function streamResponse(
     if (responseData.modelVersion) output.responseModel = responseData.modelVersion;
     if (responseData.responseId) output.responseId = responseData.responseId;
     const candidate = responseData.candidates?.[0];
+    if (!legacyProfile()) {
+      const feedback =
+        "promptFeedback" in responseData && isRecord(responseData.promptFeedback)
+          ? responseData.promptFeedback
+          : {};
+      const reason = String(
+        candidate?.finishReason ??
+          (isRecord(candidate)
+            ? (candidate as unknown as Record<string, unknown>).finish_reason
+            : "") ??
+          "",
+      )
+        .trim()
+        .toUpperCase();
+      if (
+        (typeof feedback.blockReason === "string" &&
+          feedback.blockReason.trim() &&
+          feedback.blockReason.toUpperCase() !== "NONE") ||
+        reason === "SAFETY"
+      )
+        throw new Error("Antigravity response blocked by safety policy");
+      if (reason && !["STOP", "MAX_TOKENS", "MAX_OUTPUT_TOKENS"].includes(reason))
+        throw new Error(`Antigravity response terminated with ${reason.slice(0, 100)}`);
+      if (candidate && reason)
+        candidate.finishReason = reason === "MAX_OUTPUT_TOKENS" ? "MAX_TOKENS" : reason;
+    }
 
     for (const part of candidate?.content?.parts || []) {
       if (part.text !== undefined) {
@@ -1755,7 +1680,7 @@ export async function streamResponse(
         const toolCall: ToolCall = {
           type: "toolCall",
           id: sanitizeToolCallId(rawId, part.functionCall.name),
-          name: part.functionCall.name || "",
+          name: reverseNames[part.functionCall.name || ""] || part.functionCall.name || "",
           arguments: asToolCallArguments(part.functionCall.args),
           ...(part.thoughtSignature ? { thoughtSignature: part.thoughtSignature } : {}),
         };
@@ -1829,27 +1754,58 @@ export async function streamResponse(
     currentBlock = null;
   };
 
-  while (true) {
-    const result = await reader.read();
-    if (result.done) break;
-    if (!(result.value instanceof Uint8Array)) continue;
-    buffer += decoder.decode(result.value, { stream: true });
-
-    let newlineIdx: number;
-    while ((newlineIdx = buffer.indexOf("\n", scanStart)) !== -1) {
-      const line = buffer.slice(scanStart, newlineIdx);
-      scanStart = newlineIdx + 1;
-      handleLine(line.replace(/\r$/, ""));
+  let eventLines: string[] = [];
+  let eventBytes = 0;
+  const acceptLine = (line: string) => {
+    if (legacyProfile()) {
+      handleLine(line);
+      return;
     }
-
-    if (scanStart > 0) {
-      buffer = buffer.slice(scanStart);
-      scanStart = 0;
+    if (!line) {
+      if (eventLines.length) handleLine(`data: ${eventLines.join("\n")}`);
+      eventLines = [];
+      eventBytes = 0;
+      return;
+    }
+    if (line.startsWith("data:")) {
+      const data = line.slice(5).replace(/^ /, "");
+      eventBytes += Buffer.byteLength(data) + 1;
+      if (eventBytes > 8 * 1024 * 1024) throw new Error("Antigravity SSE event exceeds 8 MiB");
+      eventLines.push(data);
+    } else if (!line.startsWith(":") && !/^(event|id|retry):/.test(line)) consumeStray(line);
+  };
+  if (!legacyProfile()) {
+    for await (const document of consumerEvents(response))
+      handleLine(`data: ${JSON.stringify(document)}`);
+  } else if (reader) {
+    try {
+      while (true) {
+        const result = await reader.read();
+        if (result.done) break;
+        if (!(result.value instanceof Uint8Array)) continue;
+        buffer += decoder.decode(result.value, { stream: true });
+        let newlineIdx: number;
+        while ((newlineIdx = buffer.indexOf("\n", scanStart)) !== -1) {
+          const line = buffer.slice(scanStart, newlineIdx);
+          scanStart = newlineIdx + 1;
+          acceptLine(line.replace(/\r$/, ""));
+        }
+        if (scanStart > 0) {
+          buffer = buffer.slice(scanStart);
+          scanStart = 0;
+        }
+        if (!legacyProfile() && Buffer.byteLength(buffer) + eventBytes > 8 * 1024 * 1024)
+          throw new Error("Antigravity SSE event exceeds 8 MiB");
+      }
+      buffer += decoder.decode();
+      if (buffer.length > 0) acceptLine(buffer.replace(/\r$/, ""));
+      if (!legacyProfile()) acceptLine("");
+    } finally {
+      await reader.cancel().catch(() => {});
+      reader.releaseLock();
     }
   }
 
-  buffer += decoder.decode();
-  if (buffer.length > 0) handleLine(buffer.replace(/\r$/, ""));
   if (!sawFinishReason) {
     throw new Error(
       "Antigravity stream ended without a finish reason; the response was terminated before completion.",
@@ -1995,6 +1951,61 @@ export function streamAntigravity(
       let creds = parseApiKey(opts.apiKey);
       const triedAccessTokens = new Set<string>([creds.token]);
       const enterpriseTarget = resolveEnterpriseTarget();
+      if (!legacyProfile() && !enterpriseTarget) {
+        const runtime =
+          antigravityEnv("RUNTIME_MODEL")?.trim() ||
+          resolveCodexModel(model.id, opts.reasoning)?.wire ||
+          getAntigravityRequestModelId(model.id, opts.reasoning ?? "off");
+        setLastResolvedRuntimeModel(runtime);
+        let reverseNames: Record<string, string> = {};
+        const response = await executeCodexGeneration({
+          credentials: creds,
+          onAccount: (account) => {
+            creds = account;
+          },
+          model: runtime,
+          signal: opts.signal,
+          build: async (project) => {
+            const payload = buildRequest(model, context, project, opts, runtime, true);
+            const rewritten = await opts.onPayload?.(payload, model);
+            const finalPayload = (
+              rewritten === undefined ? payload : rewritten
+            ) as AntigravityGenerateRequest;
+            // Normalize exactly once after Pi's payload hook. Re-mapping already sanitized
+            // collision names can silently dispatch a tool call to the wrong tool.
+            reverseNames = normalizeCodexRequest(finalPayload.request, runtime);
+            finalPayload.request.sessionId = codexSessionId(
+              finalPayload.request.contents,
+              opts.sessionId,
+            );
+            return finalPayload;
+          },
+          send: (url, init) =>
+            fetchWithHeaderDeadline(
+              url,
+              init,
+              opts.signal,
+              streamHeaderTimeoutMs(),
+              streamStallTimeoutMs(),
+            ),
+        });
+        if (
+          !(await streamResponse(response, stream, output, model, reverseNames, (document) =>
+            observeConsumerDocument(creds.token, runtime, document),
+          ))
+        )
+          throw new Error("Antigravity API returned an empty response");
+        setLastLatencyMs(Date.now() - startTime);
+        if (output.stopReason === "error" || output.stopReason === "aborted") {
+          output.errorMessage ||= `Provider stopped with: ${output.rawStopReason || "unknown"}`;
+          stream.push({ type: "error", reason: output.stopReason, error: output });
+        } else if (output.stopReason === "pending")
+          throw new Error("Antigravity API returned no stop reason");
+        else stream.push({ type: "done", reason: output.stopReason, message: output });
+        stream.end();
+        return;
+      }
+
       const primaryEndpoint = enterpriseTarget?.host ?? endpointCandidates()[0];
       if (primaryEndpoint) prewarmConnection(primaryEndpoint);
       // Skip loadCodeAssist roundtrip when credentials already carry a projectId.
@@ -2380,7 +2391,10 @@ export function streamAntigravity(
     } catch (error) {
       setLastLatencyMs(Date.now() - startTime);
       output.stopReason = opts.signal?.aborted ? "aborted" : "error";
-      output.errorMessage = safeError(error);
+      output.errorMessage =
+        error instanceof GenerationHTTPError
+          ? friendlyAntigravityError(error.status, error.body)
+          : safeError(error);
       setLastError(output.errorMessage);
       // Ensure endpoint is recorded even if failure happened before setLastEndpoint.
       if (!getCurrentEndpoint() && endpointCandidates()[0]) {

@@ -1,5 +1,6 @@
 export {
   loginAntigravity,
+  OAuthRefreshError,
   refreshAntigravityToken,
   getApiKey,
   CLIENT_ID,
@@ -14,9 +15,11 @@ export {
 export type { OAuthCredentials, OAuthLoginCallbacks } from "./oauth.js";
 export {
   activateAccount,
+  markAccountHealth,
   failoverToNextAccount,
   listAccounts,
   rememberAccount,
+  recoverPendingActiveAccount,
   removeAccount,
   updateRememberedAccount,
 } from "./accounts.js";

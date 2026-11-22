@@ -1,3 +1,4 @@
+import { OAuthRefreshError, markAccountHealth } from "./auth/index.js";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import {
   ANTIGRAVITY_IMAGE_API,
@@ -14,6 +15,7 @@ import {
   listAccounts,
   loginAntigravity,
   rememberAccount,
+  recoverPendingActiveAccount,
   refreshAntigravityToken,
   removeAccount,
   updateRememberedAccount,
@@ -89,9 +91,15 @@ async function loginAndRemember(
 async function refreshAndRemember(
   credentials: Parameters<typeof refreshAntigravityToken>[0],
 ): ReturnType<typeof refreshAntigravityToken> {
-  const refreshed = await refreshAntigravityToken(credentials);
-  updateRememberedAccount(credentials, refreshed);
-  return refreshed;
+  try {
+    const refreshed = await refreshAntigravityToken(credentials);
+    updateRememberedAccount(credentials, refreshed);
+    return refreshed;
+  } catch (error) {
+    if (error instanceof OAuthRefreshError && error.permanent)
+      markAccountHealth(credentials.access, "", { block: "oauth_refresh_invalid" });
+    throw error;
+  }
 }
 
 async function withUsage(
@@ -163,6 +171,15 @@ export default function (pi: ExtensionAPI): void {
   // headless process hydrates Gemini 4 from the persisted store (#93).
   pi.on("session_start", async (_event, ctx) => {
     if (process.env.PI_OFFLINE !== undefined) return;
+    try {
+      await recoverPendingActiveAccount();
+    } catch {
+      if (ctx.hasUI)
+        ctx.ui.notify(
+          "Antigravity identity recovery is pending; retry account switch or re-login if revoked.",
+          "warning",
+        );
+    }
     if (typeof ctx.modelRegistry?.refresh !== "function") return;
     try {
       const refresh = ctx.modelRegistry.refresh({ providers: [PROVIDER_ID] });
@@ -399,6 +416,7 @@ export default function (pi: ExtensionAPI): void {
         `lastProjectId=${d.projectId || "none"}`,
         `linkedAccounts=${accounts.length || "none"}`,
         `activeAccount=${activeLabel || "none"}`,
+        `accountSyncWarnings=${active?.syncWarnings?.join(",") || "none"}`,
         `aiCreditOverages=${isCreditsEnabled() ? "enabled" : "disabled"}`,
         `routing=${describeEnterpriseRouting()}`,
         ...(d.latencyMs !== undefined ? [`lastLatencyMs=${d.latencyMs}`] : []),

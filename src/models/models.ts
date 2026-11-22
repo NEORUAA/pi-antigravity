@@ -1,3 +1,5 @@
+import { CODEX_CATALOG } from "../compat/catalog.js";
+import { legacyProfile } from "../compat/profile.js";
 import type { AntigravityModelConfig, AntigravityRouting, ThinkingWire } from "../types/types.js";
 import { ThinkingEffort } from "../types/enums.js";
 import type { AntigravityCatalog } from "./grouping.js";
@@ -295,7 +297,7 @@ const thinkingLevelMaps = {
 } satisfies Record<string, AntigravityModelConfig["thinkingLevelMap"]>;
 
 /** Same set as `agy models`, collapsed to public Pi model IDs. */
-export const ANTIGRAVITY_MODELS: AntigravityModelConfig[] = [
+const LEGACY_MODELS: AntigravityModelConfig[] = [
   {
     id: "gemini-3.8-flash",
     name: "Gemini 3.8 Flash (Antigravity)",
@@ -377,6 +379,31 @@ export const ANTIGRAVITY_MODELS: AntigravityModelConfig[] = [
     maxTokens: 32768,
   },
 ];
+
+/** Pi requires UI budget/price fields absent from the pinned transport catalog.
+ * Reuse family metadata when known; unknown families have zero/unknown cost and
+ * conservative local UI limits. These values never force a generation token cap. */
+export const ANTIGRAVITY_MODELS: AntigravityModelConfig[] = legacyProfile()
+  ? LEGACY_MODELS
+  : CODEX_CATALOG.map((definition) => {
+      const family = definition.id.startsWith("claude-opus-")
+        ? "claude-opus-4-6"
+        : definition.id.startsWith("claude-sonnet-")
+          ? "claude-sonnet-4-6"
+          : definition.id.startsWith("gpt-")
+            ? "gpt-oss-120b"
+            : "gemini-3.8-flash";
+      const base =
+        LEGACY_MODELS.find((model) => model.id === definition.id) ??
+        LEGACY_MODELS.find((model) => model.id === family)!;
+      return {
+        ...base,
+        id: definition.id,
+        name: `${definition.id} (Antigravity · pinned)`,
+        reasoning: definition.variants.length > 0,
+        thinkingLevelMap: undefined,
+      };
+    });
 
 let currentModels: AntigravityModelConfig[] = ANTIGRAVITY_MODELS;
 let currentRouting: Record<string, AntigravityRouting> = { ...ANTIGRAVITY_ROUTING };
