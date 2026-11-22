@@ -1,6 +1,6 @@
 # Verification record
 
-Local final review: 2026-11-22 18:59 JST (unpublished). Node v24.22.1, Yarn 4.18.0, Linux.
+Local final review: 2026-11-22 19:03 JST (unpublished). Node v24.22.1, Yarn 4.18.0, Linux.
 
 No dependency lifecycle scripts, personal credential reads, Google logins,
 real Google upstream calls, live smoke scripts or account-risk tests were run.
@@ -19,7 +19,7 @@ The runner overrides inherited OAuth configuration with synthetic client values.
 | Application/state-machine regressions                   | PASS: 24 groups, including before/after-output errors, switched identity, refresh races, native hook and tool transport         |
 | Independent Go quota-gate differentials                 | PASS: 558 source-extracted vectors                                                                                              |
 | One-shot Sync lifecycle                                 | PASS: 11 groups; source stage order/recovery, snapshot semantics, concurrent removal                                            |
-| Durable checkpoint / actual restart                     | PASS: 17 groups, including quarantine, subject changes, abort, atomic cleanup, deletion and stale SDK recovery                  |
+| Durable checkpoint / actual restart                     | PASS: 18 groups, including quarantine, subject changes, abort, atomic cleanup, deletion and stale SDK recovery                  |
 | Original Pi regression scripts, explicit legacy profile | 23/24 PASS                                                                                                                      |
 | Combined offline test command                           | **FAIL**, correctly returns nonzero for the baseline URL-reader failure below                                                   |
 
@@ -45,7 +45,7 @@ even though the failure is present before this migration.
 
 ```bash
 yarn install --immutable
-yarn test:codex          # 19 contracts + 714/558 Go vectors + 24 application + 11 Sync + 17 checkpoint/restart groups
+yarn test:codex          # 19 contracts + 714/558 Go vectors + 24 application + 11 Sync + 18 checkpoint/restart groups
 yarn test                # Source checks + original legacy-profile scripts + new contracts
 yarn format:check
 ```

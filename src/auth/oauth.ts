@@ -613,6 +613,14 @@ export function refreshAntigravityToken(
       return refreshTokenUncached(candidate, undefined, flight);
     });
   }
+  // A protocol-comparison switch must never bypass an existing quarantine.
+  try {
+    credentials = validatedCredential(credentials);
+  } catch (error) {
+    return Promise.reject(
+      error instanceof Error ? error : new Error("Antigravity credential quarantine"),
+    );
+  }
   const stored = credentials as AntigravityOAuthCredentials;
   const key = createHash("sha256")
     .update(
@@ -889,7 +897,7 @@ async function validateCredential(
 }
 
 export function getApiKey(credentials: OAuthCredentials): string {
-  if (!legacyProfile()) credentials = validatedCredential(credentials);
+  credentials = validatedCredential(credentials);
   const email = credentialEmail(credentials);
   if (!legacyProfile() && !credentialProjectId(credentials))
     throw new Error("Antigravity has no provisioned project. Run /login antigravity.");

@@ -108,6 +108,11 @@ try {
       root();const prior={...old,subject:"prior-google-subject"};rememberAccount(prior);token();profile(rotated.access);control();await assert.rejects(refreshAntigravityToken(prior),/principal changed/);assert.equal(entry().state,"permanent");assert.equal(entry().credentials.refresh,rotated.refresh);assert.equal(accountAvailable(rotated.access,"gemini-fixture"),false);assert.throws(()=>getApiKey(prior),/permanent/);
       profile("reconsent-access");const result=await synchronizeAntigravityCredential({access:"reconsent-access",refresh:rotated.refresh,expires:Date.now()+3500_000},{freshLogin:true});assert.equal(result.subject,"verified-google-subject");assert.equal(entry().state,"verified");
     });
+    await test("legacy protocol comparison cannot bypass a pending credential quarantine",async()=>{
+      root();seed();await failAfterRotation();process.env.ANTIGRAVITY_COMPAT_PROFILE="pi";
+      try {assert.throws(()=>getApiKey(old),/pending/);assert.throws(()=>parseApiKey(JSON.stringify({token:rotated.access,projectId:"unverified-project"})),/Invalid/);await assert.rejects(refreshAntigravityToken(old),/pending/);}
+      finally {process.env.ANTIGRAVITY_COMPAT_PROFILE="codex";}
+    });
     mock.assertNoPendingInterceptors();console.log(`PASS ${count} durable checkpoint/restart groups`);
   }
 } finally {globalThis.fetch=originalFetch;setGlobalDispatcher(dispatcher);await mock.close();}

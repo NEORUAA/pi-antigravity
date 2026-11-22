@@ -119,7 +119,7 @@ export function parseApiKey(apiKeyRaw: string | undefined): AntigravityApiKey {
       !/^[\x21-\x7e]+$/.test(parsed.projectId)
     )
       throw new Error("missing token or projectId");
-    if (!legacyProfile()) assertCheckpointToken(parsed.token);
+    assertCheckpointToken(parsed.token);
     return { token: parsed.token, projectId: parsed.projectId };
   } catch {
     // JSON parser errors can quote the credential input. Do not retain that cause.

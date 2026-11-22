@@ -151,7 +151,8 @@ replacement, forbidden/no-project retries, optional failures and concurrent remo
 - SDK login/refresh still returns validated credentials or an error, but a new
   owner-only `antigravity-checkpoints.json` **durably records a received rotated
   tuple before profile/project/catalog validation**. Pending material never reaches
-  normal API-key/consumer calls. Successful validation promotes the journal before
+  normal API-key/consumer calls, including when the legacy protocol-comparison
+  profile is selected. Successful validation promotes the journal before
   SDK/account-file projection, so restart can repair an interrupted publication.
 - Temporary failures/cancellation retain the rotated tuple for revalidation without
   another unnecessary token exchange. A pending active account is repaired once at
