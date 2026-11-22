@@ -33,3 +33,26 @@ for (const [index, test] of fixture.cases.entries()) {
 }
 assert.equal(failures, 0, `${failures}/${fixture.cases.length} independent Go reference cases diverged`);
 console.log(`PASS ${fixture.cases.length} differential reference cases (${fixture.sourceCommit})`);
+
+// Separate pinned Go source extraction covers the quota gate, including account-
+// wide fallback and the differences between unknown/absent/expired/stale zero.
+const { normalizeQuotaModels, quotaGate } = await import("../src/auth/quota-snapshot.js");
+const quotaFixture = JSON.parse(readFileSync(new URL("./fixtures/codex-parity/quota-reference.json", import.meta.url), "utf8"));
+let quotaFailures = 0;
+for (const [index, test] of quotaFixture.cases.entries()) {
+  const raw = test.input.snapshot, now = Date.parse(test.input.now);
+  let snapshot;
+  if (raw) {
+    snapshot = normalizeQuotaModels({}, now);
+    snapshot.schemaVersion = raw.schema_version;
+    const meta = raw.source_metadata?.groups;
+    snapshot.groupsMeta = meta ? { appliedSeq: meta.applied_seq, observedAt: Date.parse(meta.observed_at), summaryIntegrity: meta.summary_integrity } : undefined;
+    snapshot.groups = (raw.quota_groups ?? []).map(group => ({displayName:"",description:"",buckets:group.buckets.map(b=>({bucketId:b.bucket_id,window:b.window,remainingFraction:b.remaining_fraction ?? undefined,fractionPresent:b.fraction_present,resetTime:b.reset_time,observedAt:Date.parse(b.observed_at),observationSeq:1,ttlSeconds:b.ttl_seconds}))}));
+  }
+  const gate = quotaGate(snapshot, test.input.model, now);
+  const actual = { blocked: gate.blocked, reason: gate.reason ?? "", resetAt: gate.resetAt ?? 0 };
+  try { assert.deepEqual(actual,test.expected); }
+  catch { quotaFailures++; console.error(JSON.stringify({index,input:test.input,expected:test.expected,actual})); }
+}
+assert.equal(quotaFailures,0,`${quotaFailures}/${quotaFixture.cases.length} independent Go quota gates diverged`);
+console.log(`PASS ${quotaFixture.cases.length} differential quota-gate cases (${quotaFixture.sourceCommit})`);

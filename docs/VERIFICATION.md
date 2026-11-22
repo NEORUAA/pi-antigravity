@@ -1,6 +1,6 @@
 # Verification record
 
-Local second review: 2026-11-22 18:24 JST (unpublished). Node v24.22.1, Yarn 4.18.0, Linux.
+Local second review: 2026-11-22 18:37 JST (unpublished). Node v24.22.1, Yarn 4.18.0, Linux.
 
 No dependency lifecycle scripts, personal credential reads, Google logins,
 real Google upstream calls, live smoke scripts or account-risk tests were run.
@@ -16,13 +16,16 @@ All stores and fixtures were isolated inside the private implementation checkout
 | Default codex consumer contracts                        | PASS: 19 groups (multiple cases/group)                                                                                          |
 | Independent pinned-Go differential vectors              | PASS: 714 vectors; 32 oracle executions; one source-nondeterministic malformed-schema case explicitly records observed variants |
 | Application/state-machine regressions                   | PASS: 24 groups, including before/after-output errors, switched identity, refresh races, native hook and tool transport         |
+| Independent Go quota-gate differentials                 | PASS: 558 source-extracted vectors                                                                                              |
+| One-shot Sync lifecycle                                 | PASS: 11 groups; source stage order/recovery, snapshot semantics, concurrent removal                                            |
 | Original Pi regression scripts, explicit legacy profile | 23/24 PASS                                                                                                                      |
 | Combined offline test command                           | **FAIL**, correctly returns nonzero for the baseline URL-reader failure below                                                   |
 
 The second revision is local only. No second push, merge, new PR or PR readiness
-change was made. The substantive remaining one-shot Sync/quota-gate gap is documented
-in [SOURCE_REVIEW.md](SOURCE_REVIEW.md); these passing tests do **not** make that
-unimplemented lifecycle complete.
+change was made. One-shot Sync/quota gates are implemented and checked; the remaining
+partial-credential checkpoint/pending-revalidation durability difference is explicitly
+tracked in [SOURCE_REVIEW.md](SOURCE_REVIEW.md). Passing tests do not establish
+complete Go lifecycle equivalence or live upstream behavior.
 
 ## Existing URL-reader failure
 
@@ -40,7 +43,7 @@ even though the failure is present before this migration.
 
 ```bash
 yarn install --immutable
-yarn test:codex          # 19 contract groups + 714 reference vectors + 24 application groups
+yarn test:codex          # 19 contracts + 714/558 Go vectors + 24 application + 11 Sync groups
 yarn test                # Source checks + original legacy-profile scripts + new contracts
 yarn format:check
 ```
@@ -60,6 +63,7 @@ Optional regeneration (Go toolchain required only for this development command):
 
 ```bash
 python3 scripts/reference-oracle.py /path/to/codex2api-at-d8e1981f
+python3 scripts/quota-reference-oracle.py /path/to/codex2api-at-d8e1981f
 # If not automatically formatted, run yarn prettier --write scripts/fixtures/codex-parity/reference.json
 ```
 

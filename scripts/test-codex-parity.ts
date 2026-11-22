@@ -120,11 +120,11 @@ try {
     await assert.rejects(refreshAntigravityToken({ access: "old", refresh: "unverified-refresh", expires: 0 }), /verified email/);
   });
   await test("parallel refresh single-flight/rotation/revalidated identity", async () => {
-    tokenReply("refreshed-fixture"); profileReply(); let loads = 0;
-    globalThis.fetch = (async () => { loads++; return json({ cloudaicompanionProject: "new-identity-project" }); }) as typeof fetch;
+    tokenReply("refreshed-fixture"); profileReply(); const loads: string[] = [];
+    globalThis.fetch = (async (url) => { loads.push(String(url).split(":").at(-1)!); return json({ cloudaicompanionProject: "new-identity-project" }); }) as typeof fetch;
     const previous = { access: "old", refresh: "parallel-fixture-refresh", expires: 0, projectId: "old-project", idToken: "old-id" };
     const results = await Promise.all(Array.from({ length: 8 }, () => refreshAntigravityToken(previous)));
-    assert.equal(loads, 1); assert.ok(results.every((result) => result === results[0]));
+    assert.deepEqual(loads, ["loadCodeAssist", "fetchAvailableModels", "retrieveUserQuotaSummary", "loadCodeAssist"]); assert.ok(results.every((result) => result === results[0]));
     assert.equal(results[0].projectId, "new-identity-project"); assert.equal(results[0].refresh, "fixture-rotated"); assert.equal(results[0].idToken, undefined);
   });
   await test("permanent structured OAuth error vs transient and retry cleanup", async () => {

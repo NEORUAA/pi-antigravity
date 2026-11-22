@@ -19,6 +19,7 @@ export type IdentityContext = {
   paidTier?: Tier;
   allowedTiers?: Tier[];
   ineligibleTiers?: unknown[];
+  entitlementsObserved?: boolean;
 };
 export class ControlPlaneError extends Error {
   readonly status: number;
@@ -41,7 +42,7 @@ export function selectOnboardTier(context: Omit<IdentityContext, "projectId">): 
     "free-tier"
   );
 }
-async function post(
+export async function postControl(
   token: string,
   base: string,
   method: string,
@@ -60,7 +61,16 @@ async function post(
     redirect: "error",
   });
   // Bound control-plane responses just like the Go client (4 MiB).
-  const data = await readControlJSON(res);
+  let data: unknown;
+  try {
+    data = await readControlJSON(res);
+  } catch {
+    // Retain HTTP status on malformed/non-JSON failures, just like postJSON.
+    throw new ControlPlaneError(
+      res.status,
+      `Antigravity ${method} HTTP ${res.status}: unreadable response`,
+    );
+  }
   if (!res.ok)
     throw new ControlPlaneError(
       res.status,
@@ -99,6 +109,7 @@ export async function readControlJSON(res: {
 export type ControlPlaneOptions = {
   signal?: AbortSignal;
   userProjectId?: string;
+  preserveProjectId?: string;
   /** Dependency injection for offline contract tests; never configured by an upstream response. */
   loadBases?: string[];
   onboardBases?: string[];
@@ -120,7 +131,7 @@ export async function provisionIdentity(
   for (const base of options.loadBases ?? [PRODUCTION, SANDBOX, DAILY]) {
     options.signal?.throwIfAborted();
     try {
-      const result = await post(token, base, "loadCodeAssist", body, options.signal);
+      const result = await postControl(token, base, "loadCodeAssist", body, options.signal);
       if (!isRecord(result)) throw new Error("Invalid loadCodeAssist response");
       loaded = result;
       break;
@@ -129,18 +140,27 @@ export async function provisionIdentity(
       lastError = error;
       // Go fetchEntitlements stops on status<500 except 429, including transport status=0.
       if (!(error instanceof ControlPlaneError) || (error.status !== 429 && error.status < 500))
-        throw error;
+        if (options.preserveProjectId)
+          return { projectId: options.preserveProjectId, entitlementsObserved: false };
+        else throw error;
     }
   }
-  if (!loaded) throw lastError;
+  if (!loaded) {
+    if (options.preserveProjectId)
+      return { projectId: options.preserveProjectId, entitlementsObserved: false };
+    throw lastError;
+  }
   const context: IdentityContext = {
     projectId: project(loaded.cloudaicompanionProject) ?? "",
+    entitlementsObserved: true,
     currentTier: isRecord(loaded.currentTier) ? loaded.currentTier : undefined,
     paidTier: isRecord(loaded.paidTier) ? loaded.paidTier : undefined,
     allowedTiers: Array.isArray(loaded.allowedTiers) ? loaded.allowedTiers.filter(isRecord) : [],
     ineligibleTiers: Array.isArray(loaded.ineligibleTiers) ? loaded.ineligibleTiers : [],
   };
   if (!context.projectId && context.currentTier && userProject) context.projectId = userProject;
+  if (!context.projectId && options.preserveProjectId)
+    context.projectId = options.preserveProjectId;
   if (context.projectId) return context;
   const tierId = selectOnboardTier(context);
   const onboardMetadata: Record<string, string> = {
@@ -159,7 +179,7 @@ export async function provisionIdentity(
       if (attempt) await (options.sleep ?? abortableDelay)(2_000, options.signal);
       let response: unknown;
       try {
-        response = await post(token, base, "onboardUser", onboardBody, options.signal);
+        response = await postControl(token, base, "onboardUser", onboardBody, options.signal);
       } catch (error) {
         options.signal?.throwIfAborted();
         lastError = error;

@@ -1,5 +1,6 @@
 import { legacyProfile, profileUserAgent, abortableDelay } from "../compat/profile.js";
-import { provisionIdentity, readControlJSON } from "./control-plane.js";
+import { provisionIdentity, readControlJSON, ControlPlaneError } from "./control-plane.js";
+import { fetchQuotaSnapshot } from "./quota-snapshot.js";
 import { createHash, randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { fetch as oauthFetch } from "undici";
@@ -133,7 +134,7 @@ export async function getUserProfile(
     if (!res.ok) {
       await res.body?.cancel();
       if (legacyProfile()) return {};
-      throw new Error(`Antigravity profile HTTP ${res.status}`);
+      throw new ControlPlaneError(res.status, `Antigravity profile HTTP ${res.status}`);
     }
     const data = await readControlJSON(res);
     if (!data || typeof data !== "object") throw new Error("Invalid Google profile response");
@@ -459,6 +460,8 @@ export async function loginAntigravity(
       access_token: string;
       refresh_token?: string;
       expires_in: number;
+      id_token?: string;
+      scope?: string;
     };
     if (
       typeof tokenData.access_token !== "string" ||
@@ -473,6 +476,20 @@ export async function loginAntigravity(
       );
     }
 
+    if (!legacyProfile())
+      return synchronizeAntigravityCredential(
+        {
+          refresh: tokenData.refresh_token,
+          access: tokenData.access_token,
+          expires: Date.now() + tokenData.expires_in * 1000 - 5 * 60 * 1000,
+          oauthClientKey: client.key,
+          oauthClientId: client.id,
+          oauthClientSecret: client.secret,
+          idToken: typeof tokenData.id_token === "string" ? tokenData.id_token : undefined,
+          scope: typeof tokenData.scope === "string" ? tokenData.scope : undefined,
+        },
+        { signal: callbacks.signal },
+      );
     const { email } = await getUserProfile(tokenData.access_token, callbacks.signal);
     const identity = legacyProfile()
       ? undefined
@@ -520,6 +537,7 @@ export function refreshAntigravityToken(
 }
 async function refreshTokenUncached(
   credentials: OAuthCredentials,
+  recovery: { profile: boolean; quota: boolean } = { profile: true, quota: true },
 ): Promise<AntigravityOAuthCredentials> {
   if (!credentials.refresh?.trim())
     throw new OAuthRefreshError("Antigravity refresh token is required", true);
@@ -601,6 +619,21 @@ async function refreshTokenUncached(
     };
     if (!data.access_token?.trim() || !Number.isFinite(data.expires_in) || data.expires_in! <= 0)
       throw new OAuthRefreshError("OAuth server returned an invalid access token or expiry", false);
+    if (!legacyProfile())
+      return synchronizeAntigravityCredential(
+        {
+          ...stored,
+          refresh: data.refresh_token?.trim() || credentials.refresh,
+          access: data.access_token.trim(),
+          expires: Date.now() + data.expires_in! * 1000 - 5 * 60 * 1000,
+          oauthClientKey: candidate.key,
+          oauthClientId: candidate.id,
+          oauthClientSecret: candidate.secret,
+          idToken: data.id_token,
+          scope: data.scope || stored.scope,
+        },
+        { recovery, forceRebuildProject: !recovery.quota },
+      );
     const profile = legacyProfile()
       ? { email: credentialEmail(credentials) }
       : await getUserProfile(data.access_token);
@@ -628,6 +661,72 @@ async function refreshTokenUncached(
     };
   }
   throw new OAuthRefreshError(message, allPermanent);
+}
+
+/** Full one-shot identity -> quota catalog -> summary -> credit observation.
+ * Each 401 stage recovers once. A quota-401 recovery drops ALL old identity-bound
+ * observations/project before retry, even if the verified email stays equal. */
+export async function synchronizeAntigravityCredential(
+  credentials: AntigravityOAuthCredentials,
+  options: {
+    signal?: AbortSignal;
+    recovery?: { profile: boolean; quota: boolean };
+    forceRebuildProject?: boolean;
+  } = {},
+): Promise<AntigravityOAuthCredentials> {
+  const recovery = options.recovery ?? { profile: true, quota: true };
+  options.signal?.throwIfAborted();
+  if (!credentials.access || credentials.expires <= Date.now())
+    return refreshTokenUncached(credentials, recovery);
+  let profile;
+  try {
+    profile = await getUserProfile(credentials.access, options.signal);
+  } catch (error) {
+    if (
+      error instanceof ControlPlaneError &&
+      error.status === 401 &&
+      recovery.profile &&
+      credentials.refresh
+    )
+      return refreshTokenUncached(credentials, { ...recovery, profile: false });
+    throw error;
+  }
+  const sameIdentity =
+    !!credentials.email &&
+    credentials.email.toLowerCase() === profile.email?.toLowerCase() &&
+    !options.forceRebuildProject;
+  const identity = await provisionIdentity(credentials.access, {
+    signal: options.signal,
+    preserveProjectId: sameIdentity ? credentials.projectId : undefined,
+  });
+  const updated: AntigravityOAuthCredentials = {
+    ...credentials,
+    email: profile.email,
+    identity,
+    projectId: identity.projectId,
+    quota: undefined,
+  };
+  try {
+    updated.quota = await fetchQuotaSnapshot(credentials.access, identity.projectId, {
+      signal: options.signal,
+      previous:
+        sameIdentity && credentials.projectId === identity.projectId
+          ? credentials.quota
+          : undefined,
+    });
+  } catch (error) {
+    if (
+      error instanceof ControlPlaneError &&
+      error.status === 401 &&
+      recovery.quota &&
+      credentials.refresh
+    )
+      return refreshTokenUncached(updated, { ...recovery, quota: false });
+    throw error;
+  }
+  if (identity.entitlementsObserved === false)
+    updated.quota?.warnings.push("entitlements_unavailable");
+  return updated;
 }
 
 export function getApiKey(credentials: OAuthCredentials): string {

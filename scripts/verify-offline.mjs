@@ -21,7 +21,8 @@ let commands = [
 const codexCommand = ["codex-default-contracts", process.execPath, ["scripts/run-ts.mjs", "scripts/test-codex-parity.ts"]];
 const differential = ["codex-reference-differential", process.execPath, ["scripts/run-ts.mjs", "scripts/test-codex-differential.ts"]];
 const application = ["codex-application-state-machines", process.execPath, ["scripts/run-ts.mjs", "scripts/test-codex-application.ts"]];
-commands = process.argv.includes("--codex-only") ? [codexCommand, differential, application] : [...commands, codexCommand, differential, application];
+const sync = ["codex-one-shot-sync", process.execPath, ["scripts/run-ts.mjs", "scripts/test-codex-sync.ts"]];
+commands = process.argv.includes("--codex-only") ? [codexCommand, differential, application, sync] : [...commands, codexCommand, differential, application, sync];
 const results = [];
 for (const [name, executable, args] of commands) {
   const result = spawnSync(executable, args, { cwd: root, env: environment, encoding: "utf8", timeout: 120_000, maxBuffer: 8 * 1024 * 1024 });

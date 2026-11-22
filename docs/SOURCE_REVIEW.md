@@ -35,32 +35,32 @@ that new code is already on GitHub.
   opt-ins and explicitly invoked Pi tool semantics. No unrelated URL-reader
   long-fence implementation or test was changed.
 
-## Substantive remaining work: one-shot Sync and quota gates
+## One-shot Sync follow-up
 
-`auth/antigravity_client.go:562–631` is a separate `Sync` entry point, beyond
-`ExchangeOAuthAuthorizationCode` and token refresh. It does:
+The substantive missing one-shot lifecycle was **implemented locally**, not
+reclassified as a scheduler/UI boundary:
 
-1. profile/entitlements (one 401-triggered refresh/revalidation);
-2. `fetchQuota` (`1012–1048`), sandbox → daily → production, retry 403 without
-   project once per endpoint; terminal 401; final forbidden snapshot;
-3. quota-401 refresh, then **rebuild all identity-bound snapshots** before retry;
-4. model/catalog/fraction-presence normalization (`1051–1103`);
-5. quota groups (`1229–1271`) and AI credits (`1274–1298`), retaining unknown vs zero;
-6. account entitlement/quota gates consuming those snapshots (not just HTTP 429
-   cooldowns), with source TTL/reset/presence semantics.
+| Pinned source                                                                   | Port / offline evidence                                                                                                                                             |
+| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auth/antigravity_client.go:562–676`                                            | OAuth `synchronizeAntigravityCredential`: verified identity, one profile-401 recovery, quota-401 refresh + full identity/project rebuild, no recursive refresh loop |
+| `1012–1103`                                                                     | `quota-snapshot.ts`: sandbox/daily/production catalog, per-endpoint project-less 403 retry, final forbidden, model/catalog/internal/forwarding normalization        |
+| `1229–1298`                                                                     | Optional group/credit observations, fallback status rules, missing-vs-zero credit/fraction preservation, snake-case credit metadata                                 |
+| `1116–1227`; `antigravity_quota_family.go`; `antigravity_quota_gate.go:264–406` | Trusted local V2 metadata, authoritative-group replacement, reset/TTL/stale-zero/family gates; 558 independent source-extracted Go vectors                          |
 
-The current Pi login/refresh performs token/profile/project provisioning but not
-that complete one-shot Sync state machine. Existing explicit Pi usage commands
-are not a substitute. This must not be described as merely an excluded Redis,
-CAS, management UI or background-frequency feature.
+The Sync suite also tests single-flight over the entire normal refresh/sync,
+401 principal/project replacement, final forbidden, optional failures, unknown
+fraction vs zero and deletion races. The previous parallel-refresh test now asserts
+all four control-plane stages, not the obsolete single `loadCodeAssist` call.
 
-Next implementation should introduce an isolated one-shot Sync service and
-normalized owner-only snapshots, wire it to login/refresh or an explicitly reviewed
-Pi lifecycle point, add request-level gates without installing a background polling
-loop, and test: 401 principal/project replacement, 403 project-less retry/final
-forbidden, 429/5xx failover, unknown fraction vs zero, reset/TTL expiry, group
-integrity and negative/malformed quota. Only after that review can full application
-chain completion be assessed. No real credential/upstream test is authorized here.
+Remaining **specific durability gap**: the Pi SDK returns credentials-or-error,
+not both. If a token refresh succeeds but subsequent mandatory profile/project/
+catalog validation fails, new credentials are not checkpointed in a DB-first
+pending-revalidation record; the SDK receives an error and may require re-login.
+This behavior must not be described as identical to Go's durable recovery path.
+Missing project on a fresh login fails closed rather than creating an unusable
+management account. See CODEX_PARITY for immediate local V2 promotion and explicit
+active-account affinity vs full gateway pool scheduling. No background polling,
+distributed CAS, DB/Redis or sidecar was introduced.
 
 ## Remote CI snapshot
 

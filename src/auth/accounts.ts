@@ -16,6 +16,7 @@ import { join, dirname } from "node:path";
 import type { OAuthCredentials } from "@earendil-works/pi-ai";
 import { defaultProjectId } from "../client/client.js";
 import type { AntigravityApiKey, AntigravityOAuthCredentials } from "../types/types.js";
+import { quotaGate } from "./quota-snapshot.js";
 import { legacyProfile } from "../compat/profile.js";
 import { OAuthRefreshError, refreshAntigravityToken } from "./oauth.js";
 
@@ -46,6 +47,7 @@ export type AccountSummary = {
   email?: string;
   active: boolean;
   lastUsedAt: number;
+  syncWarnings?: string[];
 };
 
 function agentDir(): string {
@@ -207,6 +209,7 @@ function writeActiveCredential(account: StoredAccount | undefined): void {
       expires: account.expires,
       projectId: account.projectId,
       identity: account.identity,
+      quota: account.quota,
       oauthClientKey: account.oauthClientKey,
       oauthClientId: account.oauthClientId,
       oauthClientSecret: account.oauthClientSecret,
@@ -226,6 +229,7 @@ function currentAuthCredentials(): AntigravityOAuthCredentials | undefined {
   if (typeof record.refresh !== "string" || !record.refresh) return undefined;
   return {
     identity: record.identity as AntigravityOAuthCredentials["identity"],
+    quota: record.quota as AntigravityOAuthCredentials["quota"],
     oauthClientKey: typeof record.oauthClientKey === "string" ? record.oauthClientKey : undefined,
     oauthClientId: typeof record.oauthClientId === "string" ? record.oauthClientId : undefined,
     oauthClientSecret:
@@ -294,6 +298,14 @@ export function listAccounts(): AccountSummary[] {
     email: account.email,
     active: account.accountId === store.activeAccountId,
     lastUsedAt: account.lastUsedAt,
+    syncWarnings: account.quota?.warnings.filter((value) =>
+      [
+        "quota_summary_incomplete",
+        "quota_summary_unavailable",
+        "ai_credits_unavailable",
+        "entitlements_unavailable",
+      ].includes(value),
+    ),
   }));
 }
 
@@ -324,10 +336,16 @@ export async function activateAccount(selector: string): Promise<StoredAccount> 
   const existing = store.accounts[accountId];
   if (!existing) throw new Error(`Antigravity account not found: ${selector}`);
   const account = await ensureFresh(existing);
+  const latest = loadAccountStore();
+  const live = latest.accounts[account.accountId];
+  if (!live) throw new Error("Antigravity account was removed during activation");
+  account.health = live.health;
+  if (!legacyProfile() && account.health?.blockedReason)
+    throw new Error("Antigravity account became blocked during activation");
   account.lastUsedAt = Date.now();
-  store.accounts[account.accountId] = account;
-  store.activeAccountId = account.accountId;
-  saveAccountStore(store);
+  latest.accounts[account.accountId] = account;
+  latest.activeAccountId = account.accountId;
+  saveAccountStore(latest);
   writeActiveCredential(account);
   return account;
 }
@@ -337,20 +355,35 @@ export async function removeAccount(selector: string): Promise<StoredAccount | u
   const store = loadAccountStore();
   const accountId = findAccountId(store, selector);
   if (!accountId) throw new Error(`Antigravity account not found: ${selector}`);
+  const wasActive = store.activeAccountId === accountId;
   delete store.accounts[accountId];
-  let next: StoredAccount | undefined;
-  if (store.activeAccountId === accountId) {
-    next = sortedAccounts(store).sort((a, b) => b.lastUsedAt - a.lastUsedAt)[0];
-    if (next) {
-      next = await ensureFresh(next);
-      next.lastUsedAt = Date.now();
-      store.accounts[next.accountId] = next;
-    }
-    store.activeAccountId = next?.accountId;
-    writeActiveCredential(next);
-  }
+  if (wasActive) store.activeAccountId = undefined;
+  // Publish removal before any fallback-account network wait. Clearing the old
+  // SDK projection also prevents syncCurrentAuth from importing it again.
   saveAccountStore(store);
-  return next;
+  if (!wasActive) return undefined;
+  writeActiveCredential(undefined);
+  const next = sortedAccounts(store).sort((a, b) => b.lastUsedAt - a.lastUsedAt)[0];
+  if (!next) return undefined;
+  let updated: StoredAccount;
+  try {
+    updated = await ensureFresh(next);
+  } catch (error) {
+    if (error instanceof OAuthRefreshError && error.permanent)
+      markAccountHealth(next.access, "", { block: "oauth_refresh_invalid" });
+    return undefined;
+  }
+  const latest = loadAccountStore();
+  if (latest.activeAccountId) return latest.accounts[latest.activeAccountId];
+  const live = latest.accounts[next.accountId];
+  if (!live || (!legacyProfile() && live.health?.blockedReason)) return undefined;
+  updated.health = live.health;
+  updated.lastUsedAt = Date.now();
+  latest.accounts[updated.accountId] = updated;
+  latest.activeAccountId = updated.accountId;
+  saveAccountStore(latest);
+  writeActiveCredential(updated);
+  return updated;
 }
 
 /**
@@ -383,10 +416,14 @@ export async function failoverToNextAccount(
       return apiKeyFor(account);
     } catch (error) {
       if (error instanceof OAuthRefreshError && error.permanent) {
-        candidate.health = { ...candidate.health, blockedReason: "oauth_refresh_invalid" };
         const latest = loadAccountStore();
-        latest.accounts[candidate.accountId] = candidate;
-        saveAccountStore(latest);
+        const live = latest.accounts[candidate.accountId];
+        // Failure from an old flight must not resurrect deletion or fence a
+        // newer credential generation which has already recovered.
+        if (live && live.access === candidate.access && live.refresh === candidate.refresh) {
+          live.health = { ...live.health, blockedReason: "oauth_refresh_invalid" };
+          saveAccountStore(latest);
+        }
       }
     }
   }
@@ -401,7 +438,7 @@ function family(model: string): string {
     : model;
 }
 function available(account: StoredAccount, model?: string): boolean {
-  if (account.health?.blockedReason) return false;
+  if (account.health?.blockedReason || quotaGate(account.quota, model ?? "").blocked) return false;
   const cooldowns = account.health?.cooldowns;
   return !model || Math.max(cooldowns?.[model] ?? 0, cooldowns?.[family(model)] ?? 0) <= Date.now();
 }

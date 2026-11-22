@@ -1,3 +1,4 @@
+import type { QuotaSnapshot } from "../auth/quota-snapshot.js";
 import type { IdentityContext } from "../auth/control-plane.js";
 import type { Server } from "node:http";
 import type {
@@ -15,6 +16,7 @@ export type AntigravityOAuthCredentials = OAuthCredentials & {
   projectId?: string;
   email?: string;
   identity?: IdentityContext;
+  quota?: QuotaSnapshot;
   oauthClientKey?: string;
   oauthClientId?: string;
   oauthClientSecret?: string;

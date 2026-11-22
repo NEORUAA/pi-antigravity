@@ -81,7 +81,7 @@ second revision now adds:
   dispatch for search and image generation. Image body errors cannot silently select
   another model. URL-reader RPCs retain Pi's crawler contract but share UA/pool,
   deadlines and terminal-error health observation.
-- Default pinned model registration without automatic live catalog probes. Explicit
+- Default pinned model registration without startup catalog probes (separate from the required login/refresh quota catalog observation). Explicit
   `/antigravity.refresh` still queries; automatic discovery requires
   `ANTIGRAVITY_DYNAMIC_DISCOVERY=1`. Citation redirect/title enrichment requires
   `ANTIGRAVITY_SOURCE_ENRICH=1`; public citations never receive bearer headers.
@@ -110,28 +110,61 @@ so Pi parameters named `type`, `format`, `$defs`, `required` or `enum` survive.
 This is a deliberate compatibility fix, not byte-for-byte replication of that bug.
 The differential kernel and the Pi adaptation have separate tests.
 
-## Remaining application gap — not a transport/database boundary
+## One-shot Sync and pre-dispatch observations
 
-The source's **separate account-management `AntigravityClient.Sync`**
-(`auth/antigravity_client.go:562–631`) also performs a one-shot
-`fetchAvailableModels` quota/catalog snapshot, `retrieveUserQuotaSummary`, and
-AI-credit `loadCodeAssist`, including a quota-401 refresh followed by identity
-rebuilding. This is **not merely its background polling scheduler**.
+The previously missing **separate `AntigravityClient.Sync`** lifecycle is now
+wired to default-profile OAuth login and refresh by `synchronizeAntigravityCredential`
+and `auth/quota-snapshot.ts`, rather than being dismissed as background polling:
 
-That source-normalized one-shot Sync/snapshot/gate lifecycle has **not** been
-integrated into Pi login/refresh in this revision. Pi's explicitly invoked
-`/antigravity.usage`/model commands remain available, but are not an implementation
-of that state machine. Request-observed HTTP/SSE health is implemented; pre-dispatch
-account entitlement/quota snapshots and quota-pressure-based account selection are
-not equivalent. This is substantive remaining work, not an acceptance boundary
-that makes the migration "complete". See [SOURCE_REVIEW.md](SOURCE_REVIEW.md) for
-exact next steps. Do not label or merge this as a complete reproduction yet.
+- Verified profile, load/onboard/project, then sandbox → daily → production
+  `fetchAvailableModels`; each 403 with a project retries without it once.
+  401 is terminal to this stage; it permits one refresh and **full identity/project
+  rebuild** before retry, not reuse of a different principal's old observations.
+- Catalog/internal/forwarding IDs and per-model fraction presence (missing is not
+  zero), normalized model fractions and supported model metadata are persisted.
+- `retrieveUserQuotaSummary` follows the source 403/404/429/5xx fallback policy;
+  daily AI-credit `loadCodeAssist` uses the separate snake-case IDE metadata.
+  Missing credit amount means zero; unreadable/failed optional facts stay unknown.
+- Same-identity incomplete/failed summaries retain old bucket timestamps instead
+  of washing away known zero. Nonempty authoritative groups replace absent buckets.
+  Owner-only account/auth snapshots carry observations; doctor shows only fixed,
+  sanitized warning codes.
+- Generation/search/image dispatch and failover consume local V2 gates: trusted
+  observation sequence, fraction presence, model-family/Argon fallback, unknown
+  buckets, reset plausibility, stale zero and TTL. There is **no background loop**.
+  `ANTIGRAVITY_QUOTA_GATE_ENABLED=0` disables group-quota gates, not hard denial.
+
+`quota-reference.json` adds **558 independent Go gate vectors** to the original
+714 vectors. The additional offline Sync suite covers stage order, 401 identity
+replacement, forbidden/no-project retries, optional failures and concurrent removal.
+
+### Explicit Pi lifecycle adaptations (not hidden source equivalence claims)
+
+- Pi has an explicitly selected active account. It remains the request's identity
+  until eligible failover, rather than installing the gateway's weighted pool,
+  expiry-priority scheduler or distributed session-binding service. Session seeds,
+  intra-request identity consistency and request-level health/failover are retained.
+- Because Pi has no summary scheduler, a successful **nonempty one-shot summary**
+  is immediately promoted to a local trusted V2 observation (2-hour TTL, the source
+  default interval's derived TTL). Source's standalone client Sync returns facts;
+  its separate durable summary producer normally attaches V2 scheduling metadata.
+- SDK login/refresh must either return validated credentials or throw. Missing
+  verified profile/project or mandatory catalog failure therefore fails closed;
+  it does not publish an unusable partially-synchronized gateway account. Unlike
+  the Go DB-first pending-revalidation lifecycle, a newly rotated credential is
+  **not durably checkpointed before subsequent validation fails**. Re-login may be
+  required after such a failure; crash recovery/partial credential persistence is
+  a concrete remaining durability difference, not an assertion of full equivalence.
+- Pi reports provider errors/events, not the gateway's HTTP 429/Retry-After envelope.
+  No real Google/credential test or safety-risk comparison has been performed.
 
 ## Actual architectural / SDK differences
 
 1. **Transport/browser:** Node/Undici is not Go net/http. TLS ClientHello,
    ALPN/HTTP2, header order/canonicalization, pooling, proxy/DNS/decompression and
-   browser fingerprints are not equivalent. No Go sidecar or impersonation was added.
+   browser fingerprints are not equivalent. Quota clocks use JavaScript millisecond
+   precision rather than Go nanoseconds; unusual/noncanonical timestamps may be
+   treated as unknown and use the bounded TTL fallback. No Go sidecar or impersonation was added.
 2. **Pi-facing contract:** Pi provider registration, transcript conversion,
    streaming events, manual callback and explicitly invoked extra tools remain.
    No external OpenAI/Anthropic gateway, administration UI or database is installed.

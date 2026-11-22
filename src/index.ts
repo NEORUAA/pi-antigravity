@@ -406,6 +406,7 @@ export default function (pi: ExtensionAPI): void {
         `lastProjectId=${d.projectId || "none"}`,
         `linkedAccounts=${accounts.length || "none"}`,
         `activeAccount=${activeLabel || "none"}`,
+        `accountSyncWarnings=${active?.syncWarnings?.join(",") || "none"}`,
         `aiCreditOverages=${isCreditsEnabled() ? "enabled" : "disabled"}`,
         `routing=${describeEnterpriseRouting()}`,
         ...(d.latencyMs !== undefined ? [`lastLatencyMs=${d.latencyMs}`] : []),
