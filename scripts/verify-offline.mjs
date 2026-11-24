@@ -29,7 +29,15 @@ const sync = ["codex-one-shot-sync", process.execPath, ["scripts/run-ts.mjs", "s
 const checkpoint = ["codex-durable-checkpoint", process.execPath, ["scripts/run-ts.mjs", "scripts/test-credential-checkpoint.ts"]];
 const accountCatalog = ["account-model-go-differential", process.execPath, ["scripts/run-ts.mjs", "scripts/test-account-catalog.ts"]];
 const magpie = ["magpie-real-host-contract", process.execPath, ["scripts/run-ts.mjs", "scripts/test-magpie-host.ts"]];
-commands = process.argv.includes("--codex-only") ? [codexCommand, differential, application, sync, checkpoint, accountCatalog, magpie] : [...commands, codexCommand, differential, application, sync, checkpoint, accountCatalog, magpie];
+const nativeChecks=[
+ ["native-original-go-differential",process.execPath,["scripts/run-ts.mjs","scripts/test-native-oracle.ts"]],
+ ["native-canonical-health-generation",process.execPath,["scripts/run-ts.mjs","scripts/test-native-health-journal.ts"]],
+ ["native-directory-durability",process.execPath,["scripts/run-ts.mjs","scripts/test-directory-sync.ts"]],
+ ["native-real-quota-ui",process.execPath,["scripts/run-ts.mjs","scripts/test-native-quota-ui.ts"]],
+ ...["validation","cooldown","delete"].map(kind=>["native-host-race-"+kind,process.execPath,["scripts/run-ts.mjs","scripts/test-native-race.ts","--scenario",kind]]),
+];
+const consumerChecks=[codexCommand,differential,application,sync,checkpoint,accountCatalog,magpie,...nativeChecks];
+commands = process.argv.includes("--native-only")?nativeChecks:process.argv.includes("--codex-only")?consumerChecks:[...commands,...consumerChecks];
 const results = [];
 for (const [name, executable, args] of commands) {
   const result = spawnSync(executable, args, { cwd: root, env: environment, encoding: "utf8", timeout: 120_000, maxBuffer: 8 * 1024 * 1024 });

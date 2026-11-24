@@ -28,7 +28,7 @@ Google credentials or real Google requests were used to implement/test this work
   `proxy/antigravity_function_names.go`, `proxy/antigravity_schema.go`, and
   `proxy/antigravity_gemini.go`, `proxy/antigravity_gemini_schema.go`,
   `proxy/antigravity_schema_refs.go`, `proxy/client_scaffolding.go`, and
-  `proxy/antigravity_stream_errors.go`. Existing notices in the Pi base are retained.
+  `proxy/antigravity_stream_errors.go`, and `proxy/antigravity_json_mode.go`. Existing notices in the Pi base are retained.
   Consult the reference's rights holder before externally redistributing if the
   absent root license text creates a compliance concern.
 
@@ -273,3 +273,15 @@ cancellation paths, without selecting Pi's unrelated active account. This is a
 supported loader integration, not a host patch, monkey-patch or local gateway.
 No real Google account/quota was exercised; no Go TLS equivalence or risk
 reduction is asserted. Source pins and existing architecture boundaries remain.
+
+### Native audit candidate (0.16.1, local review only)
+
+See [SOURCE_REVIEW.md](SOURCE_REVIEW.md#independent-native-audit-repair--local-0161-candidate)
+for exact source counterparts, independently reproduced defects, genuine Go
+native vectors, real host/UI rendering tests and the bounded review. Native
+normalization is not the Pi typed converter: the compatible content/signature
+kernels are shared, while native schemas/config/unwrap retain their source rules.
+Canonical native protection lives in the generation checkpoint, not eventually
+rewritten host metadata. Directory fsync capability is separate from mandatory
+file durability and permissions; see [Magpie persistence notes](MAGPIE.md).
+These changes are not yet on main at the time of this local review record.

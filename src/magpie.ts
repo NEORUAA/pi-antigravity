@@ -1,11 +1,27 @@
+import {
+  consumerLease,
+  initializeConsumerHealth,
+  consumerHealth,
+  updateConsumerHealth,
+  type ConsumerLease,
+} from "./auth/checkpoint.js";
 /** Native OpenCode/Magpie hooks. Uses Magpie's documented Gemini provider API;
  * no local server, host patch or Pi-SDK runtime dependency. Pi uses extensions/. */
 import { loginAntigravity, refreshAntigravityToken, getApiKey } from "./auth/oauth.js";
 import { observeAccount } from "./auth/account-view.js";
 import { accountModelIds, accountSupportsModel } from "./compat/account-catalog.js";
-import { CODEX_CATALOG, codexThinking, resolveCodexModel } from "./compat/catalog.js";
-import { codexRequestId, codexSessionId } from "./compat/profile.js";
-import { normalizeCodexRequest } from "./compat/request.js";
+import { CODEX_CATALOG, resolveCodexModel } from "./compat/catalog.js";
+import { codexRequestId } from "./compat/profile.js";
+import {
+  normalizeNativeGeminiRequest,
+  nativeTerminal,
+  unwrapNative,
+  nativeJSONModeRejection,
+  nativeCountTokensRequest,
+  unwrapNativeCountTokens,
+  claudeJSONMode,
+  rewriteJSONModeFrame,
+} from "./compat/native-gemini.js";
 import { parseApiKey } from "./client/client.js";
 import { consumerFetch } from "./client/consumer-fetch.js";
 import { consumerEvents } from "./client/consumer-sse.js";
@@ -53,25 +69,21 @@ async function observed(input: Input, getAuth: GetAuth, signal?: AbortSignal) {
       )
     )
       throw new Error("Account changed while synchronizing; refresh again");
-    const next = { ...verified, consumerHealth: value.consumerHealth };
+    initializeConsumerHealth(verified, isRecord(old) ? old.consumerHealth : undefined);
+    const next = { ...verified, consumerHealth: consumerHealth(consumerLease(verified)) };
     if (JSON.stringify(value) !== JSON.stringify({ ...next, type: "oauth" }))
       await save(input, next);
     return next;
   });
 }
-type CallerHealth = {
-  blockedReason?: string;
-  cooldowns?: Record<string, number>;
-  lastFailure?: { at: number; status: number; kind: string; model: string };
-};
 const healthFlights = new Map<string, Promise<void>>();
 async function serializeAccount<T>(key: string, work: () => Promise<T>): Promise<T> {
   const previous = healthFlights.get(key) ?? Promise.resolve();
-  const result = previous.catch(() => {}).then(work);
-  const barrier = result.then(
-    () => {},
-    () => {},
-  );
+  const result = previous.catch(() => {}).then(work),
+    barrier = result.then(
+      () => {},
+      () => {},
+    );
   healthFlights.set(key, barrier);
   try {
     return await result;
@@ -85,64 +97,41 @@ const family = (model: string) =>
       ? "gemini:argon"
       : "gemini:shared"
     : model;
-function callerHealth(c: AntigravityOAuthCredentials): CallerHealth {
-  return isRecord(c.consumerHealth) ? c.consumerHealth : {};
-}
 async function recordFailure(
-  input: Input,
-  getAuth: GetAuth,
+  _input: Input,
+  _getAuth: GetAuth,
   c: AntigravityOAuthCredentials,
   model: string,
   error: unknown,
+  lease?: ConsumerLease,
 ) {
-  if (!(error instanceof GenerationHTTPError)) return;
-  const key = c.subject ?? c.refresh;
-  const previous = healthFlights.get(key) ?? Promise.resolve();
-  const task = previous
-    .catch(() => {})
-    .then(async () => {
-      const value = await getAuth();
-      if (
-        !isRecord(value) ||
-        value.type !== "oauth" ||
-        value.access !== c.access ||
-        value.refresh !== c.refresh
-      )
-        return;
-      const current = credential(value),
-        health = structuredClone(callerHealth(current));
-      observeConsumerFailure(
-        c.access,
-        model,
-        error.status,
-        error.body,
-        error.headers,
-        (_token, _model, update) => {
-          if (update.block) health.blockedReason = update.block;
-          if (update.failure) health.lastFailure = update.failure;
-          if (update.cooldownMs) {
-            health.cooldowns ??= {};
-            const shared = model.startsWith("gemini-")
-              ? family(model)
-              : update.quotaModel
-                ? family(update.quotaModel)
-                : model;
-            for (const id of [model, ...(update.familyQuota ? [shared] : [])])
-              health.cooldowns[id] = Math.max(
-                health.cooldowns[id] ?? 0,
-                Date.now() + update.cooldownMs,
-              );
-          }
-        },
-      );
-      await save(input, { ...current, consumerHealth: health });
-    });
-  healthFlights.set(key, task);
-  try {
-    await task;
-  } finally {
-    if (healthFlights.get(key) === task) healthFlights.delete(key);
-  }
+  if (!(error instanceof GenerationHTTPError) || !lease) return;
+  updateConsumerHealth(lease, (health) =>
+    observeConsumerFailure(
+      c.access,
+      model,
+      error.status,
+      error.body,
+      error.headers,
+      (_token, _model, update) => {
+        if (update.block) health.blockedReason = update.block;
+        if (update.failure) health.lastFailure = update.failure;
+        if (update.cooldownMs) {
+          health.cooldowns ??= {};
+          const shared = model.startsWith("gemini-")
+            ? family(model)
+            : update.quotaModel
+              ? family(update.quotaModel)
+              : model;
+          for (const id of [model, ...(update.familyQuota ? [shared] : [])])
+            health.cooldowns[id] = Math.max(
+              health.cooldowns[id] ?? 0,
+              Date.now() + update.cooldownMs,
+            );
+        }
+      },
+    ),
+  );
 }
 function usageView(c: AntigravityOAuthCredentials) {
   const q = c.quota,
@@ -164,49 +153,88 @@ function usageView(c: AntigravityOAuthCredentials) {
   }
   if (q.aiCreditsObserved && typeof q.aiCredits === "number" && Number.isFinite(q.aiCredits))
     out.balance = String(q.aiCredits) + " AI credits";
+  const pools = new Map<string, string>();
   for (const group of q.groupsObserved ? q.groups : []) {
-    const scope = /gemini/i.test(group.displayName)
-      ? ids.filter((id) => id.startsWith("gemini"))
-      : /claude|gpt/i.test(group.displayName)
-        ? ids.filter((id) => /^(claude|gpt)/.test(id))
-        : ids;
-    for (const b of group.buckets) {
+    const pool = group.displayName;
+    const scope = /argon/i.test(pool)
+      ? ids.filter((id) => /argon/i.test(id))
+      : /gemini/i.test(pool)
+        ? ids.filter((id) => /^gemini/i.test(id) && !/argon/i.test(id))
+        : /claude|gpt/i.test(pool)
+          ? ids.filter((id) => /^(claude|gpt)/i.test(id))
+          : [];
+    if (group.buckets.length) for (const id of scope) pools.set(id, pool);
+    for (const bucket of group.buckets) {
       const known =
-        b.fractionPresent &&
-        typeof b.remainingFraction === "number" &&
-        Number.isFinite(b.remainingFraction) &&
-        Date.now() - b.observedAt <= b.ttlSeconds * 1000;
+        bucket.fractionPresent &&
+        typeof bucket.remainingFraction === "number" &&
+        Number.isFinite(bucket.remainingFraction) &&
+        Date.now() - bucket.observedAt <= bucket.ttlSeconds * 1000;
       out.windows.push({
-        name: group.displayName + " · " + b.window,
+        name:
+          bucket.window === "5h"
+            ? "5 hours"
+            : bucket.window === "weekly"
+              ? "1 week"
+              : bucket.window,
+        pool,
         models: scope,
         ...(known
-          ? { used: (1 - Math.max(0, Math.min(1, b.remainingFraction!))) * 100 }
+          ? { used: (1 - Math.max(0, Math.min(1, bucket.remainingFraction!))) * 100 }
           : { display: "Unknown" }),
-        resetsAt: b.resetTime || undefined,
-        span: b.window === "5h" ? 18000 : b.window === "weekly" ? 604800 : undefined,
+        resetsAt: bucket.resetTime || undefined,
+        span: bucket.window === "5h" ? 18000 : bucket.window === "weekly" ? 604800 : undefined,
       });
     }
   }
-  if (!out.windows.length) {
-    // The summary endpoint can be unavailable on free plans. Preserve actual
-    // per-backing readings; do not manufacture a shared family or a full balance.
-    const visible = new Set(ids);
-    for (const m of q.models) {
-      const mapped = ids.filter((id) => {
-        const d = CODEX_CATALOG.find((x) => x.id === id);
-        return d?.wire === m.modelId || id === m.modelId;
-      });
-      if (!mapped.length && !visible.has(m.modelId)) continue;
+  // Always emit observed/backing model rows, including models missing quota.
+  // Real summary pools supersede their member rows in the compact card. A raw
+  // backing without a summary is its own model pool, NEVER an invented 5h/week.
+  const backing = new Map<string, string[]>();
+  for (const id of ids) {
+    const wire = CODEX_CATALOG.find((d) => d.id === id)?.wire ?? id;
+    backing.set(wire, [...(backing.get(wire) ?? []), id]);
+  }
+  for (const [wire, models] of backing) {
+    const m = q.models.find((row) => row.modelId === wire),
+      pool = pools.get(models[0]);
+    const known =
+      m?.fractionPresent &&
+      typeof m.remainingFraction === "number" &&
+      Number.isFinite(m.remainingFraction) &&
+      Date.now() - q.updatedAt <= 300000;
+    out.windows.push({
+      name: pool ? m?.displayName || wire : "Reported quota",
+      pool: pool ?? (m?.displayName || wire),
+      ...(pool
+        ? {
+            family: /^gemini/i.test(wire)
+              ? "Gemini"
+              : /^claude/i.test(wire)
+                ? "Claude"
+                : /^gpt/i.test(wire)
+                  ? "GPT"
+                  : wire,
+          }
+        : {}),
+      models,
+      ...(known
+        ? { used: (1 - Math.max(0, Math.min(1, m.remainingFraction!))) * 100 }
+        : { display: "Unknown" }),
+      resetsAt: m?.resetTime || undefined,
+    });
+    if (!pool) {
+      const summary = out.windows.at(-1)!;
       out.windows.push({
-        name: m.displayName || m.modelId,
-        models: mapped.length ? mapped : [m.modelId],
-        ...(m.fractionPresent &&
-        typeof m.remainingFraction === "number" &&
-        Number.isFinite(m.remainingFraction) &&
-        Date.now() - q.updatedAt <= 300000
-          ? { used: (1 - Math.max(0, Math.min(1, m.remainingFraction))) * 100 }
-          : { display: "Unknown" }),
-        resetsAt: m.resetTime || undefined,
+        ...summary,
+        name: m?.displayName || wire,
+        family: /^gemini/i.test(wire)
+          ? "Gemini"
+          : /^claude/i.test(wire)
+            ? "Claude"
+            : /^gpt/i.test(wire)
+              ? "GPT"
+              : wire,
       });
     }
   }
@@ -247,16 +275,6 @@ function modelView(c: AntigravityOAuthCredentials) {
     }),
   );
 }
-function restoreNames(value: unknown, names: Record<string, string>): unknown {
-  if (Array.isArray(value)) return value.map((x) => restoreNames(x, names));
-  if (!isRecord(value)) return value;
-  for (const [k, v] of Object.entries(value)) {
-    if (k === "functionCall" && isRecord(v) && typeof v.name === "string" && names[v.name])
-      v.name = names[v.name];
-    else value[k] = restoreNames(v, names);
-  }
-  return value;
-}
 async function nativeFetch(
   input: Input,
   getAuth: GetAuth,
@@ -265,20 +283,26 @@ async function nativeFetch(
 ): Promise<Response> {
   let bound: AntigravityOAuthCredentials | undefined;
   let selected = "";
+  let selectedPublic = "";
+  let jsonModeRequested = false;
+  let lease: ConsumerLease | undefined;
   const signal = init?.signal ?? (url instanceof Request ? url.signal : undefined) ?? undefined;
   try {
     signal?.throwIfAborted();
     const endpoint = new URL(url instanceof Request ? url.url : String(url));
-    const match = /\/models\/([^/]+):(streamGenerateContent|generateContent)$/.exec(
+    const match = /\/models\/([^/]+):(streamGenerateContent|generateContent|countTokens)$/.exec(
       endpoint.pathname,
     );
     if (!match)
       return Response.json(
-        { error: { message: "Expected a Gemini generateContent request" } },
+        { error: { message: "Expected a Gemini generation or countTokens request" } },
         { status: 400 },
       );
-    const id = decodeURIComponent(match[1]);
+    const id = decodeURIComponent(match[1])
+      .trim()
+      .replace(/^models\//, "");
     selected = id;
+    selectedPublic = id;
     const raw: unknown = JSON.parse(
       typeof init?.body === "string" ? init.body : url instanceof Request ? await url.text() : "{}",
     );
@@ -293,7 +317,8 @@ async function nativeFetch(
       );
     if (quotaGate(c.quota, id).blocked)
       return Response.json({ error: { message: "Model quota unavailable" } }, { status: 429 });
-    const health = callerHealth(c);
+    lease = consumerLease(c);
+    const health = consumerHealth(lease);
     if (
       health.blockedReason ||
       Math.max(
@@ -308,35 +333,55 @@ async function nativeFetch(
       );
     const runtime = resolveCodexModel(id)?.wire ?? id,
       request = structuredClone(raw) as unknown as GeminiRequestBody;
-    const names = normalizeCodexRequest(request, runtime);
-    request.sessionId = codexSessionId(request.contents);
+    const names = normalizeNativeGeminiRequest(request, id, runtime);
     selected = runtime;
-    const thinking = codexThinking(id, runtime);
-    if (thinking)
-      request.generationConfig = { ...request.generationConfig, thinkingConfig: thinking };
+    jsonModeRequested = claudeJSONMode(request, runtime);
     const response = await executeCodexGeneration({
       accountPolicy: "caller",
       credentials: parseApiKey(getApiKey(c)),
       model: runtime,
       signal,
       send: consumerFetch,
-      method: match[2] as "generateContent" | "streamGenerateContent",
-      build: (project) => ({
-        project,
-        model: runtime,
-        request,
-        requestType: "agent",
-        userAgent: "antigravity",
-        requestId: codexRequestId(),
-        ...(isCreditsEnabled() ? { enabledCreditTypes: ["GOOGLE_ONE_AI"] } : {}),
-      }),
+      method: match[2] as "generateContent" | "streamGenerateContent" | "countTokens",
+      build: (project) =>
+        match[2] === "countTokens"
+          ? nativeCountTokensRequest(request, runtime)
+          : {
+              project,
+              model: runtime,
+              request,
+              requestType: "agent",
+              userAgent: "antigravity",
+              requestId: codexRequestId(),
+              ...(isCreditsEnabled() ? { enabledCreditTypes: ["GOOGLE_ONE_AI"] } : {}),
+            },
     });
-    const checked = (d: Record<string, unknown>) => {
-      observeConsumerDocument(c.access, runtime, d, false);
-      return restoreNames(isRecord(d.response) ? d.response : d, names);
+    let sawTerminal = false;
+    const jsonMode = jsonModeRequested,
+      jsonModeState = { toolCalled: false };
+    const checked = (d: Record<string, unknown>, nonstream = false) => {
+      if (jsonMode) rewriteJSONModeFrame(d, jsonModeState);
+      let payload = d;
+      for (;;) {
+        observeConsumerDocument(c.access, runtime, payload, false);
+        if (!isRecord(payload.response)) break;
+        payload = payload.response;
+      }
+      sawTerminal ||= nativeTerminal(payload);
+      return unwrapNative(d, names, nonstream);
     };
+    if (match[2] === "countTokens") {
+      const document = await readConsumerJson(response, 1024 * 1024);
+      observeConsumerDocument(c.access, runtime, document, false);
+      return Response.json(unwrapNativeCountTokens(document));
+    }
     if (match[2] === "generateContent")
-      return Response.json(checked((await readConsumerJson(response)) as Record<string, unknown>));
+      return Response.json(
+        checked(
+          (await readConsumerJson(response, 8 * 1024 * 1024)) as Record<string, unknown>,
+          true,
+        ),
+      );
     const iterator = consumerEvents(response);
     let first: IteratorResult<unknown, void> | undefined;
     try {
@@ -360,6 +405,10 @@ async function nativeFetch(
             first = undefined;
             const next = item ?? (await iterator.next());
             if (next.done) {
+              if (!sawTerminal)
+                throw new Error(
+                  "Antigravity Gemini stream ended before a terminal response: unexpected EOF",
+                );
               done = true;
               controller.close();
               return;
@@ -376,7 +425,7 @@ async function nativeFetch(
           } catch (e) {
             done = true;
             await iterator.return(undefined).catch(() => {});
-            await recordFailure(input, getAuth, c, runtime, e);
+            await recordFailure(input, getAuth, c, runtime, e, lease);
             controller.error(new Error(safeError(e)));
           }
         },
@@ -389,7 +438,15 @@ async function nativeFetch(
     );
   } catch (error) {
     if (signal?.aborted) throw signal.reason ?? error;
-    if (bound) await recordFailure(input, getAuth, bound, selected, error);
+    if (bound) await recordFailure(input, getAuth, bound, selected, error, lease);
+    if (jsonModeRequested && error instanceof GenerationHTTPError && error.status === 400) {
+      const rejection = nativeJSONModeRejection(error.body, selectedPublic);
+      if (rejection)
+        return Response.json(
+          { error: { ...rejection, message: safeError(new Error(String(rejection.message))) } },
+          { status: 400 },
+        );
+    }
     const status = error instanceof GenerationHTTPError ? error.status : 502;
     return Response.json(
       { error: { message: safeError(error) } },
@@ -479,7 +536,9 @@ export default async function AntigravityMagpie(input: Input) {
       methods: [googleMethod(false), googleMethod(true)],
       async refresh(stored: unknown) {
         const old = credential(stored);
-        return { ...(await refreshAntigravityToken(old)), consumerHealth: old.consumerHealth };
+        const next = await refreshAntigravityToken(old);
+        initializeConsumerHealth(next, isRecord(stored) ? stored.consumerHealth : undefined);
+        return { ...next, consumerHealth: consumerHealth(consumerLease(next)) };
       },
       async usage(getAuth: GetAuth, _provider: unknown, options?: { signal?: AbortSignal }) {
         try {

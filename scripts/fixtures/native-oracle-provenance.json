@@ -1,0 +1,23 @@
+{
+  "commit": "d8e1981f1cc13d0b00fb4d4354e9c8777392319e",
+  "sources": {
+    "client_scaffolding.go": "0a4c89ef03a8e524f8a3af14df1841c71fb21175a9ecf23320b25b065955ebb0",
+    "antigravity_gemini_schema.go": "c11a8a1efbfaa357badc006e9f185a1ad210c4dc268c223dcb07d173f9f52279",
+    "antigravity_schema_refs.go": "0f754f794f3e6e6cb3b18b5651bee910b1c21c5653b3f60df175bdc8218252ef",
+    "antigravity_schema.go": "630b75b25d9b7014bc6318a6390e78ee96a6dbe69601eddb6c74a7207f27d5ed",
+    "antigravity_function_names.go": "3b7fc6ecb74ee812516a8748a5a07058de252db74898afe8640b14adb3a11f82",
+    "sse_line.go": "8decc369e2753d34288f1859877243b034d2da9a9bdc73ca561a829d32ab6216",
+    "antigravity_gemini.go": "182393a66797505b9de47f9171ce184eb4615dc8fcd88ef51ccbdcc696e28d7e",
+    "antigravity_stream_errors.go": "f73ee7971d66aaa05087d125764c0538d39690a2257a06171f718a0e70f716c8",
+    "antigravity_models.go": "66303725744de72f6de250a3113080b9cfd77989906e64531d309ad3256fabf5",
+    "antigravity_json_mode.go": "c40fb834672294bf42235b1cf1376435b0acd7effd7240a4e3ac662be073e497",
+    "antigravity_responses.go": "e5fd4482dfdb3e261b9482ffeba2547bba9d42e18637a6b0e9d4bd53335828aa"
+  },
+  "adapters": [
+    "session ID and request ID fixed, session excluded from request comparison (existing independent session vectors retained)",
+    "administrator model redirects empty and redirect-overrides-effort false; native plugin has no gateway redirect settings",
+    "auth.AntigravityExposeThoughts() returns true; no auth package or Google requests"
+  ],
+  "gjson": "v1.18.0 (checksum pinned by original go.sum)",
+  "generator": "scripts/native-oracle.py"
+}

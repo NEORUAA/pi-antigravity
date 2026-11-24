@@ -1,3 +1,4 @@
+import { rememberRawJSON } from "../compat/json-raw.js";
 /** Pinned antigravity_stream_errors.go framing: SSE + bare/array errors and
  * unprefixed JSON continuation lines. Runtime remains Node, not Go transport. */
 import { isRecord } from "../utils/util.js";
@@ -44,11 +45,11 @@ export function decodeConsumerEnvelope(raw: string): Record<string, unknown> {
     const error = (document as unknown[]).find(
       (item) => isRecord(item) && Object.hasOwn(item, "error"),
     );
-    if (isRecord(error)) return error;
+    if (isRecord(error)) return rememberRawJSON(error, raw);
     throw new Error("Antigravity stream array has no error object");
   }
   if (!isRecord(document)) throw new Error("Antigravity stream payload must be a JSON object");
-  return document;
+  return rememberRawJSON(document, raw);
 }
 export async function* consumerEvents(
   response: Response,

@@ -1,3 +1,9 @@
+import {
+  groupNativeToolResults,
+  normalizeNativeRoles,
+  sanitizeNativeSignatures,
+  renameAllowedFunctions,
+} from "./gemini-parts.js";
 /** Native Gemini-shaped request normalization. See docs/CODEX_PARITY.md for the
  * pinned source, retained Pi adaptations, and explicit unsupported gateway paths. */
 import { createHash } from "node:crypto";
@@ -58,9 +64,11 @@ function descriptions(value: unknown, propertyBag = false): void {
       descriptions(item);
       continue;
     }
-    if (["enum", "const", "default", "examples", "example"].includes(key)) continue;
-    if (key === "description" && typeof item === "string") value[key] = obfuscateDescription(item);
-    else descriptions(item, key === "properties");
+    const normalized = trimCodexWhitespace(key).toLowerCase();
+    if (["enum", "const", "default", "examples", "example"].includes(normalized)) continue;
+    if (normalized === "description" && typeof item === "string")
+      value[key] = obfuscateDescription(item);
+    else descriptions(item, normalized === "properties");
   }
 }
 export function normalizeCodexRequest(
@@ -104,6 +112,13 @@ export function normalizeCodexRequest(
         config.responseSchema = codexResponseSchema(schema, true);
     }
   }
+  groupNativeToolResults(nativeRequest);
+  normalizeNativeRoles(nativeRequest);
+  if (Object.keys(map).length)
+    renameAllowedFunctions(
+      nativeRequest,
+      (name) => map[String(name)] ?? sanitizeFunctionName(String(name)),
+    );
   for (const turn of request.contents)
     for (const part of turn.parts) {
       if ("text" in part) part.text = normalizeConversation(part.text);
@@ -119,17 +134,11 @@ export function normalizeCodexRequest(
       if ("functionCall" in part) {
         part.functionCall.name =
           map[part.functionCall.name] ?? sanitizeFunctionName(part.functionCall.name);
-        if (model.startsWith("gemini-") && !part.thoughtSignature?.trim()) {
-          part.thoughtSignature = "skip_thought_signature_validator";
-          part.thought_signature = "skip_thought_signature_validator";
-        }
       }
       if ("functionResponse" in part)
         part.functionResponse.name =
           map[part.functionResponse.name] ?? sanitizeFunctionName(part.functionResponse.name);
-      if (model.startsWith("gemini-") && (turn.role !== "model" || "functionResponse" in part)) {
-        delete (part as { thoughtSignature?: string }).thoughtSignature;
-      }
     }
+  sanitizeNativeSignatures(nativeRequest, model);
   return reverse;
 }

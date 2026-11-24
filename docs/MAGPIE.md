@@ -1,4 +1,8 @@
-# Magpie: native quota and account catalog (0.16.0)
+# Magpie: native quota and account catalog (0.16.1 candidate)
+
+This revision is a **local review candidate**, not yet pushed/released. The existing
+GitHub `main` remains the prior version until separately approved publication.
+Do not repeatedly reinstall or re-login to work around a not-yet-published fix.
 
 ## Install / identify
 
@@ -7,7 +11,7 @@
    extension, not an HTTP API service or standalone executable. No base_url server
    needs to be started. No npm/release artifact is published by this change.
 2. Update/reload the installed package and restart its plugin runtime. Confirm the
-   installed manifest is **0.16.0**, `main: ./src/magpie.ts`, with `./server` export.
+   installed candidate manifest is **0.16.1**, `main: ./src/magpie.ts`, with `./server` export.
    This matters: the previous Pi bridge could run chat but discarded usage hooks.
    No particular Magpie menu name or undocumented cache path is assumed here.
 3. Keep the existing Antigravity Google account if valid. Re-login is **not** the
@@ -52,18 +56,58 @@ Model/usage observations briefly reuse the same verified checkpoint (30 seconds)
 explicit Pi force-refresh bypasses it. Failed/pending verification must recover
 through synchronization; it cannot service generation. Account selection, normal
 OAuth renewal and account removal are owned by Magpie's scoped host, not Pi's
-separate active-account registry. HTTP and HTTP-200 structured-error health is
-retained as scoped `consumerHealth` metadata in Magpie's account, with the same
-classifier/family cooldowns, preserved across usage refresh/token rotation and
-restart. Native fetch neither reads/writes Pi's account pool nor switches to a different
+separate active-account registry. HTTP and HTTP-200 structured-error protection is
+authoritative in the credential-generation checkpoint, **not** in the host's
+`consumerHealth` metadata projection. Host metadata saves may interleave freely;
+they cannot erase the canonical block/cooldown. Same-epoch rotation preserves it;
+fresh verified consent uses a new epoch, and revoked generations cannot write it.
+The journal remains single-writer per plugin runtime, not a distributed database. Native fetch neither reads/writes Pi's account pool nor switches to a different
 Pi account. Pi commands and optional search/URL/image tools remain Pi extensions;
 the old Magpie Pi bridge did not expose Pi commands/tools either.
+
+## Compact provider card and usage detail
+
+The user's later observation (multi-family usage page works, compact provider
+card shows only Gemini) is consistent with Magpie's non-pool `slice(0,2)` branch;
+it is **not evidence that live Claude/GPT observations were absent**. Real summary
+groups now carry `pool` and real 5-hour/weekly names, with backing-model members.
+The actual compact UI renders all reported pools/windows. Independently, a partial
+summary no longer suppresses other models' observed quota or Unknown rows.
+An uncovered backing model gets its own exact-backing pool plus detail member;
+this is not a fabricated family allowance, weekly/5-hour window, or entitlement.
+
+## Windows/Bun persistence note
+
+The former checkpoint unconditionally opened the parent directory read-only and
+fsynced it. Windows/libuv's `FlushFileBuffers` requires a write-capable handle;
+this path can report `EPERM: ... fsync` even after the file fsync and rename.
+That matches a **possible** source of the friend's report, not a verified OS/stack
+or proof that Google authentication completed. The host also fsyncs writable files.
+
+The candidate retains exclusive `wx`/0600 file creation, mandatory **file** fsync,
+atomic same-directory rename and permission checks. Only recognized unsupported
+**directory** synchronization errors are explicitly downgraded with the redacted
+`ANTIGRAVITY_DIRECTORY_FSYNC_UNAVAILABLE` warning. File fsync, write, chmod, rename,
+EACCES, disk-full and I/O failures still fail closed. No alternate credential/log
+copy or plaintext fallback is introduced. Without directory fsync, power-loss
+persistence of the renamed entry is not guaranteed; a process restart and a sudden
+power loss are different guarantees. Windows uses the user's existing profile
+ACLs: POSIX 0600 is not a portable promise of a new Windows owner-only ACL.
+
+Only Linux Node/Bun and injected win32 faults were tested, **not Windows hardware
+or the friend's Magpie version**. OS/runtime version and a sanitized stack can
+pinpoint any remaining host/file sync failure; do not rotate through more accounts.
+Sources: [Microsoft FlushFileBuffers](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-flushfilebuffers),
+[Bun Windows libuv fsync](https://github.com/oven-sh/bun/blob/6618e7f7/src/sys/sys_uv.rs),
+[libuv Windows filesystem](https://github.com/libuv/libuv/blob/v1.51.0/src/win/fs.c).
 
 ## Evidence / limitations
 
 Offline tests execute **unmodified** MIT-licensed Magpie `host.js` / `pi.js` at
 [`9d11d588`](https://github.com/yetone/magpie/tree/9d11d5881f2887883aa92fe95dcfd16f9718f1c7),
 including actual native loader, model refresh, auth.usage and Gemini fetch dispatch.
+Unmodified quota-card functions at the same pin are also executed; their full
+source Git blob is `902bb7b7fb11747a8a1df6bc06b03f45608a238e`.
 The Pi official 1.5.0 loader separately verifies all four conventional entries.
 Independent account/admin goldens come directly from c2a Go at
 [`d8e1981f`](https://github.com/james-6-23/codex2api/blob/d8e1981f1cc13d0b00fb4d4354e9c8777392319e/proxy/antigravity_models.go).

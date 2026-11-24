@@ -14,7 +14,7 @@ globalThis.fetch=async(input,init={})=>{
  const method=url.pathname.split(":").pop();
  const payload=JSON.parse(init.body??"{}");
  const scenario=JSON.stringify(payload.request?.contents??[]);
- if(process.env.MAGPIE_FIXTURE_CALLS)fs.appendFileSync(process.env.MAGPIE_FIXTURE_CALLS,JSON.stringify({tag:t,method})+"\n");
+ if(process.env.MAGPIE_FIXTURE_CALLS)fs.appendFileSync(process.env.MAGPIE_FIXTURE_CALLS,JSON.stringify({tag:t,method,request:payload.request})+"\n");
  const json=(x,status=200)=>Response.json(x,{status});
  if(method==="loadCodeAssist")return json({cloudaicompanionProject:"project-"+t,currentTier:{id:"test-plan"},paidTier:{id:"test-plan",availableCredits:[{creditAmount:"12"}]}});
  if(method==="fetchAvailableModels"){
@@ -24,9 +24,16 @@ globalThis.fetch=async(input,init={})=>{
   return json({models});
  }
  if(method==="retrieveUserQuotaSummary")return json({groups:["U","E","F"].includes(t)?[]:[{displayName:t==="B"?"Claude and GPT Models":"Gemini Models",buckets:[{bucketId:"fixture-5h",window:"5h",remainingFraction:t==="B"?0:1,resetTime:new Date(Date.now()+3600000).toISOString()}]}]});
+ if(method==="countTokens")return json({response:{totalTokens:23}});
  if(["generateContent","streamGenerateContent"].includes(method)) {
  const event={response:{candidates:[{content:{role:"model",parts:[scenario.includes("fixture-tool")?{functionCall:{name:payload.request.tools[0].functionDeclarations[0].name,args:{value:1}}}:{text:"fixture"}]},finishReason:"STOP"}]}};
+ event.response.cpaUsageMetadata={promptTokenCount:11,candidatesTokenCount:7,totalTokenCount:18};
+ if(scenario.includes("fixture-partial"))delete event.response.candidates[0].finishReason;
+ if(scenario.includes("fixture-prompt-safety")){delete event.response.candidates;event.response.promptFeedback={blockReason:"SAFETY"};}
  const failure={error:{code:429,status:"RESOURCE_EXHAUSTED",message:"quota exhausted"}};
+
+ if(scenario.includes("fixture-json-reject"))return json({error:{message:JSON.stringify({error:{message:'tool_choice: forced tool not supported'}})}},400);
+ if(scenario.includes("fixture-json-mode")){const raw='{"response":{"candidates":[{"content":{"parts":[{"text":"not JSON"},{"text":"reason","thought":true},{"functionCall":{"name":"json_mode","args":{"10":1.00,"2":1e3}}}]}}]}}';const finish={response:{candidates:[{finishReason:"OTHER"}]}};if(method==="generateContent")return new Response(raw,{headers:{"content-type":"application/json"}});return new Response('data: '+raw+'\n\n'+'data: '+JSON.stringify(finish)+'\n\n',{headers:{"content-type":"text/event-stream"}});}
  if(method==="generateContent")return json(event);
  const frame=x=>'data: '+JSON.stringify(x)+'\n\n';
  if(scenario.includes("fixture-before-error"))return new Response(frame(failure),{headers:{"content-type":"text/event-stream"}});

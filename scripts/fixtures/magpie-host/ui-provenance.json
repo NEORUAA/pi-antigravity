@@ -1,0 +1,21 @@
+{
+  "repository": "https://github.com/yetone/magpie",
+  "commit": "9d11d5881f2887883aa92fe95dcfd16f9718f1c7",
+  "source": "internal/gui/assets/app.js",
+  "fullSourceGitBlobSHA": "902bb7b7fb11747a8a1df6bc06b03f45608a238e",
+  "extractSHA256": "ed52f741c6cbce4807feb1cb716a331c2dd8c0a267472bb386461f1fc3937683",
+  "functions": [
+    "accountQuota",
+    "poolLine",
+    "familyWindows",
+    "poolWindows",
+    "poolTip",
+    "tiersText",
+    "quotaNoShare",
+    "quotaText",
+    "quotaFill",
+    "to100",
+    "tipLines"
+  ],
+  "note": "Unmodified functions/constants extracted from the verified Git blob at the same pinned host commit; evaluate with DOM/style/i18n/count formatting stubs only. MIT LICENSE alongside; excluded from installed package."
+}
