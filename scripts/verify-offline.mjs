@@ -30,6 +30,7 @@ const checkpoint = ["codex-durable-checkpoint", process.execPath, ["scripts/run-
 const accountCatalog = ["account-model-go-differential", process.execPath, ["scripts/run-ts.mjs", "scripts/test-account-catalog.ts"]];
 const magpie = ["magpie-real-host-contract", process.execPath, ["scripts/run-ts.mjs", "scripts/test-magpie-host.ts"]];
 const nativeChecks=[
+ ["native-independent-body-cancel","bun",["scripts/test-native-cancel.ts"],{NODE_OPTIONS:""}],
  ["native-original-go-differential",process.execPath,["scripts/run-ts.mjs","scripts/test-native-oracle.ts"]],
  ["native-canonical-health-generation",process.execPath,["scripts/run-ts.mjs","scripts/test-native-health-journal.ts"]],
  ["native-directory-durability",process.execPath,["scripts/run-ts.mjs","scripts/test-directory-sync.ts"]],
@@ -39,8 +40,8 @@ const nativeChecks=[
 const consumerChecks=[codexCommand,differential,application,sync,checkpoint,accountCatalog,magpie,...nativeChecks];
 commands = process.argv.includes("--native-only")?nativeChecks:process.argv.includes("--codex-only")?consumerChecks:[...commands,...consumerChecks];
 const results = [];
-for (const [name, executable, args] of commands) {
-  const result = spawnSync(executable, args, { cwd: root, env: environment, encoding: "utf8", timeout: 120_000, maxBuffer: 8 * 1024 * 1024 });
+for (const [name, executable, args, overrides] of commands) {
+  const result = spawnSync(executable, args, { cwd: root, env: {...environment,...overrides}, encoding: "utf8", timeout: 120_000, maxBuffer: 8 * 1024 * 1024 });
   writeFileSync(resolve(root, `.cache/${name.replaceAll("/", "-")}.log`), `${result.stdout ?? ""}${result.stderr ?? ""}`);
   results.push({ name, status: result.status, error: result.error?.message });
   console.log(`${result.status === 0 ? "PASS" : "FAIL"} ${name}${result.error ? `: ${result.error.message}` : ""}`);

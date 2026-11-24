@@ -29,10 +29,28 @@ const host=start();try{
  const renewal=host.call("keepSignedIn",{provider:"antigravity"});await wait("token-started");
  writeFileSync(join(temp,"sse-release"),"");const failed=await flight;
  const fenced=JSON.parse(readFileSync(authPath,"utf8")).antigravity;
- if(kind==="delete")await host.call("signOut",{provider:"antigravity",account:"antigravity"});
+ let freshEpoch:string|undefined;
+ if(kind==="delete"){
+  const journalPath=join(home,"pi/antigravity-checkpoints.json"),oldJournal=JSON.parse(readFileSync(journalPath,"utf8"));const oldEpoch=(Object.values(oldJournal.families)[0]as any).epoch;
+  await host.call("signOut",{provider:"antigravity",account:"antigravity"});
+  assert.equal(JSON.parse(readFileSync(authPath,"utf8")).antigravity,undefined);
+  const retained=Object.values(JSON.parse(readFileSync(journalPath,"utf8")).families)as any[];
+  assert(retained.some(r=>r.state==="verified"||r.state==="pending"),"host signOut has NO plugin revoke callback: do not mislabel retained checkpoint as revoked");
+  const beforeCalls=readFileSync(calls,"utf8").trim().split("\n").length;
+  const signedOutLoad=await host.call("load",{provider:"antigravity",account:"antigravity"});assert.equal(signedOutLoad.fetch,false,"deleted account must not obtain a native fetch loader");
+  assert.equal(readFileSync(calls,"utf8").trim().split("\n").length,beforeCalls,"retained checkpoint cannot dispatch without host auth");
+  const login=await host.call("authorize",{provider:"antigravity",method:1,account:"antigravity"});const url=new URL(login.url),callback=new URL(url.searchParams.get("redirect_uri")!);callback.searchParams.set("state",url.searchParams.get("state")!);callback.searchParams.set("code","fixture-A-code");assert((await host.call("callback",{session:login.session,code:callback.toString()})).ok);
+  const freshJournal=JSON.parse(readFileSync(journalPath,"utf8"));freshEpoch=(Object.values(freshJournal.families).find((r:any)=>r.credentials?.access==="fixture-A-consent")as any).epoch;assert.notEqual(freshEpoch,oldEpoch,"re-login must replace the old credential epoch before late refresh returns");
+ }
  writeFileSync(join(temp,"token-release"),"");const renewed=await renewal;
  const after=JSON.parse(readFileSync(authPath,"utf8")).antigravity;
- if(kind==="delete"){assert.equal(after,undefined,"unmodified host must not resurrect deleted account after refresh");console.log("PASS actual host deletion during renewal");}
+ if(kind==="delete"){
+  assert.equal(after.access,"fixture-A-consent","late old refresh must not overwrite explicit re-login");
+  const journal=JSON.parse(readFileSync(join(home,"pi/antigravity-checkpoints.json"),"utf8")),record=Object.values(journal.families).find((r:any)=>r.credentials?.access==="fixture-A-consent")as any;assert.equal(record.epoch,freshEpoch);assert.equal(record.state,"verified");assert.deepEqual(record.consumerHealth,{});assert.equal(record.credentials.access,"fixture-A-consent");
+  const again=await host.call("fetch",{...request,body:Buffer.from(JSON.stringify({contents:[{role:"user",parts:[{text:"ordinary after explicit re-login"}]}]})).toString("base64")});assert.equal(again.events?.[0]?.status,200);
+  await host.call("signOut",{provider:"antigravity",account:"antigravity"});assert.equal(JSON.parse(readFileSync(authPath,"utf8")).antigravity,undefined);
+  console.log("PASS actual host signOut: retained journal is not an active account; fresh login fences late refresh and old health");
+ }
  else{
  const status=kind==="cooldown"?429:403;
  const ordinary={...request,body:Buffer.from(JSON.stringify({contents:[{role:"user",parts:[{text:"ordinary after protection fence"}]}]})).toString("base64")};

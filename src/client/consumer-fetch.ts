@@ -56,13 +56,22 @@ function guardResponseBody(
   }
   const reader = response.body.getReader();
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let finished = false;
+  let finished = false,
+    reading = false,
+    released = false;
+  const release = () => {
+    if (finished && !reading && !released) {
+      reader.releaseLock();
+      released = true;
+    }
+  };
   const finish = () => {
     if (finished) return;
     finished = true;
     if (timer) clearTimeout(timer);
     cleanup();
     controller.signal.removeEventListener("abort", abortBody);
+    release();
   };
   const reset = () => {
     if (stallMs <= 0) return;
@@ -82,8 +91,11 @@ function guardResponseBody(
       streamController = controller;
     },
     async pull(streamController) {
+      if (finished) return;
       try {
+        reading = true;
         const chunk = await reader.read();
+        if (finished) return;
         if (chunk.done) {
           finish();
           streamController.close();
@@ -97,13 +109,22 @@ function guardResponseBody(
       } catch (error) {
         finish();
         streamController.error(error);
+      } finally {
+        reading = false;
+        release();
       }
     },
     async cancel(reason) {
+      const cancellation = reader.cancel(reason);
       finish();
-      await reader.cancel(reason);
+      try {
+        await cancellation;
+      } finally {
+        release();
+      }
     },
   });
+  if (controller.signal.aborted) abortBody();
   return new Response(guarded, response);
 }
 
@@ -148,8 +169,9 @@ export async function fetchWithHeaderDeadline(
   let responseBodyGuarded = false;
   try {
     const response = await fetchFn(url, { ...init, signal: controller.signal });
+    const guarded = guardResponseBody(response, controller, stallMs, cleanup);
     responseBodyGuarded = Boolean(response.body);
-    return guardResponseBody(response, controller, stallMs, cleanup);
+    return guarded;
   } finally {
     if (timer) clearTimeout(timer);
     if (!responseBodyGuarded) cleanup();

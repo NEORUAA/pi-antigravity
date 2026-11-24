@@ -286,7 +286,19 @@ async function nativeFetch(
   let selectedPublic = "";
   let jsonModeRequested = false;
   let lease: ConsumerLease | undefined;
-  const signal = init?.signal ?? (url instanceof Request ? url.signal : undefined) ?? undefined;
+  const callerSignal =
+    init?.signal ?? (url instanceof Request ? url.signal : undefined) ?? undefined;
+  const controller = new AbortController(),
+    signal = controller.signal;
+  const forwardAbort = () => controller.abort(callerSignal?.reason);
+  callerSignal?.addEventListener("abort", forwardAbort, { once: true });
+  if (callerSignal?.aborted) forwardAbort();
+  let handedOff = false;
+  let onStreamAbort: (() => void) | undefined;
+  const cleanup = () => {
+    callerSignal?.removeEventListener("abort", forwardAbort);
+    if (onStreamAbort) signal.removeEventListener("abort", onStreamAbort);
+  };
   try {
     signal?.throwIfAborted();
     const endpoint = new URL(url instanceof Request ? url.url : String(url));
@@ -382,7 +394,7 @@ async function nativeFetch(
           true,
         ),
       );
-    const iterator = consumerEvents(response);
+    const iterator = consumerEvents(response, undefined, signal);
     let first: IteratorResult<unknown, void> | undefined;
     try {
       first = await iterator.next();
@@ -393,8 +405,22 @@ async function nativeFetch(
     }
     const encoder = new TextEncoder();
     let done = false;
+    let output: ReadableStreamDefaultController<Uint8Array>;
+    onStreamAbort = () => {
+      if (done) return;
+      done = true;
+      output.error(signal.reason);
+      cleanup();
+      void iterator.return(undefined).catch(() => {});
+    };
+    handedOff = true;
     return new Response(
       new ReadableStream<Uint8Array>({
+        start(controller) {
+          output = controller;
+          signal.addEventListener("abort", onStreamAbort!, { once: true });
+          if (signal.aborted) onStreamAbort!();
+        },
         async pull(controller) {
           try {
             if (done) {
@@ -410,6 +436,7 @@ async function nativeFetch(
                   "Antigravity Gemini stream ended before a terminal response: unexpected EOF",
                 );
               done = true;
+              cleanup();
               controller.close();
               return;
             }
@@ -423,14 +450,20 @@ async function nativeFetch(
               ),
             );
           } catch (e) {
+            if (done) return;
             done = true;
+            cleanup();
             await iterator.return(undefined).catch(() => {});
-            await recordFailure(input, getAuth, c, runtime, e, lease);
+            if (!signal.aborted) await recordFailure(input, getAuth, c, runtime, e, lease);
             controller.error(new Error(safeError(e)));
           }
         },
-        async cancel() {
+        async cancel(reason) {
           done = true;
+          // AsyncGenerator.return queues behind a pending next(). Abort its
+          // read first, like c2a Close closes the underlying source immediately.
+          controller.abort(reason ?? new DOMException("Response body cancelled", "AbortError"));
+          cleanup();
           await iterator.return(undefined).catch(() => {});
         },
       }),
@@ -452,6 +485,8 @@ async function nativeFetch(
       { error: { message: safeError(error) } },
       { status: status >= 400 && status <= 599 ? status : 502 },
     );
+  } finally {
+    if (!handedOff) cleanup();
   }
 }
 function googleMethod(manual: boolean) {

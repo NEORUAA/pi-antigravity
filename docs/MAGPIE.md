@@ -81,8 +81,9 @@ this is not a fabricated family allowance, weekly/5-hour window, or entitlement.
 The former checkpoint unconditionally opened the parent directory read-only and
 fsynced it. Windows/libuv's `FlushFileBuffers` requires a write-capable handle;
 this path can report `EPERM: ... fsync` even after the file fsync and rename.
-That matches a **possible** source of the friend's report, not a verified OS/stack
-or proof that Google authentication completed. The host also fsyncs writable files.
+The friend has now confirmed **Windows**, versus Linux on the server. That
+matches this failure mechanism, but the exact stack/sole cause and completed
+Google authentication are still not established. The host also fsyncs writable files.
 
 The candidate retains exclusive `wx`/0600 file creation, mandatory **file** fsync,
 atomic same-directory rename and permission checks. Only recognized unsupported
@@ -117,3 +118,33 @@ These are synthetic, isolated-store tests, **not** a real Google login or the
 user's installed Magpie build. Actual Google quota, availability and the host's
 rendering/version can differ. No lower-risk or Go TLS fingerprint equivalence is
 claimed. See [verification](VERIFICATION.md) and [source boundaries](CODEX_PARITY.md).
+
+## Native stream cancellation and sign-out scope (local review follow-up)
+
+A downstream **body.cancel** now owns an internal request abort, rather than
+queueing `AsyncGenerator.return()` behind a silent pending read. It interrupts
+the upstream reader first, then completes iteration and removes listeners/timers
+and reader locks. Caller abort also errors queued output even before its first
+read. Cancellation never becomes an auth/quota penalty or an internal replay.
+The initial error/status peek is preserved: before a Response exists, cancellation
+uses the caller signal; body-only cancellation is tested before/after the first
+**downstream** read. This distinction is not hidden by aborting the test's caller.
+
+Pinned Magpie signOut (`host.js:1240-1245,3809-3813`) deletes host auth, forgets
+its loader and emits an outgoing UI notification. It invokes **no plugin deletion
+callback**. `client.auth.remove` is an operation a plugin may initiate, not a
+notification of host/UI signOut; registering an invented hook cannot fix that.
+The plugin therefore cannot reliably observe all idle sign-outs or perform a
+uniform journal revoke/erase without changing the host or watching private files.
+Neither workaround is introduced.
+
+**Native signOut does not currently revoke/erase the checkpoint.** Locally
+protected pending/verified material can remain; it must not be described as
+revoked or securely erased. It is not an active host account: an explicitly
+deleted key receives no native loader, and even an old loader refuses generation
+when its scoped getAuth is absent. Other surviving accounts may still be selected
+by the host's normal routing; that is not revival of the removed account. A fresh
+OAuth login creates a separate family/epoch as appropriate and late old refresh
+cannot overwrite its credentials/health. Actual host regressions cover this.
+Pi's explicit remove command separately revokes its checkpoint; direct journal
+revoke unit tests are not claimed as native host signOut end-to-end evidence.

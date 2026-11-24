@@ -225,11 +225,40 @@ from the base and Pi pin; no test/workflow/gate was weakened to hide it.
 Short targeted reruns: `yarn test:native` (seven new groups), `yarn test:codex`
 (all consumer/native groups). Full default runner preserves all legacy failures.
 Runtime remains Node 24.22.1 / Bun 1.4.4 on Linux; no personal token/store or real
-Google request was used. The EPERM report is consistent with the former directory
-fsync path, not proof of the friend's OS, exact stack or completed Google login.
+Google request was used. The friend has since confirmed Windows (server Linux). The EPERM report is
+consistent with the former directory fsync path, but its exact stack/sole cause
+and completed Google login remain unproven.
 
 Remaining boundaries: single-writer local journal (no cross-process distributed
 CAS), host-owned account selection/keep-alive, no gateway UI/DB/Redis/external
 OpenAI/Anthropic server, no Go TLS/HTTP wire fingerprint equivalence, no real
 Google entitlement/risk or user's installed host/Windows build verification.
 No perfection or lower-ban-risk conclusion follows from these offline results.
+
+### Second-review follow-up — 2026-11-24 JST (local only)
+
+The independent 1520951 review did not approve publication: although prior
+counterexamples passed, its body.cancel-only fixture exposed a new P2. The same
+independent fixture failed locally before the follow-up and now passes without
+aborting its original caller signal. `test-native-cancel.ts` expands it to **17**
+cases, including watchdog on/off, cancel before/after downstream read, initial
+upstream silence with caller abort, network failures before/after output, empty
+EOF, legal finish and cancel-after-finish, original abort with unread output,
+concurrent request isolation, no replay, released upstream locks, removed caller
+listeners, no unhandled rejections, no quota/auth penalties and stale-loader
+rejection after host auth disappears. The initial first-frame/error peek still
+requires caller abort until a downstream Response exists; this is explicit.
+
+The actual unmodified-host deletion race now also holds an old refresh, signs out
+its specific key, confirms **no loader/no dispatch but journal retained**, performs
+fresh verified OAuth consent, then releases the old token response. The new
+family/epoch/credentials/health remain intact; no fabricated signOut callback or
+claim of native checkpoint revocation is made. Host routing to other existing
+accounts is distinct from reviving a deleted key.
+
+The full offline runner now has **42 groups** (41 PASS and the same untouched
+scenarioLongFence FAIL). The eight new native groups remain in the normal runner;
+Bun is mandatory for the original-repro test, not silently skipped. Existing Go
+212/714/558/334 vectors, Pi/default/legacy/host/UI/checkpoint suites are retained.
+See `.cache/review-cancel-full.log` / per-group logs for this local run. No real
+Google, user credentials, remote updates, release, npm publish or host edits.

@@ -170,3 +170,42 @@ regeneration requires the isolated dev dependency cache and pinned source checko
   host-build, Windows hardware, crash-power-loss or reduced account-risk claim.
 - The inherited long-fence URL-reader failure is unrelated, unchanged and visible.
   This candidate remains local awaiting independent review; no push/PR/merge.
+
+## Second local review: body cancellation / lifecycle precision
+
+Independent review of `1520951` passed its prior counterexamples but found one
+additional P2: after one frame, `reader.cancel()` queued `iterator.return()` behind
+a silent `next()` and did not cancel upstream until external abort/watchdog. The
+reviewer's independently authored native fixture reproduced false/false for
+cancel-settled/upstream-cancelled before this repair (preserved `.cache/cancel-before.log`).
+
+- `magpie.ts`: each native request now owns an AbortController linked to the
+  original signal; body.cancel first aborts it, then returns the iterator. Output
+  abort is handled even with an unread queued first chunk. Every terminal path
+  removes linked listeners; cancel does not persist failure or retry a request.
+- `consumer-sse.ts`: optional cancellation directly cancels a pending reader and
+  checks abort before yielding buffered lines. This also works when watchdogs
+  are disabled or a synthetic fetch does not itself observe its signal.
+- `consumer-fetch.ts`: the body guard releases its underlying reader on EOF,
+  network error, caller abort and downstream cancellation, after pending reads
+  settle; stale scheduled pulls cannot read an already-released reader.
+- Source counterpart remains c2a `antigravity_gemini.go:945-949`: Close closes the
+  upstream source, not an await of a future SSE event. No wire/TLS claim is made.
+- `scripts/test-native-cancel.ts` extends the independent native repro into
+  **17** body-only/initial silence/before-after downstream read/network/EOF/finish/
+  original abort/isolation/no-replay/lock/listener/health/stale-auth cases. It does
+  not call host abort RPC or external abort to make a body.cancel case pass.
+
+The pinned host has no signOut plugin callback. Its `removeAuth:1240-1245` and
+`signOut:3809-3813` only mutate host auth/cache and send outbound notifications;
+`client.auth.remove:1409-1412` is a callable operation, not a lifecycle subscription.
+No fictitious hook, host patch or credential-file watcher is installed. Thus
+native signOut leaves protected journal material retained, **not journal-revoked**.
+Actual-host tests now explicitly assert this distinction, the deleted key has no
+loader, a stale native loader without scoped auth cannot dispatch, and explicit
+fresh consent fences an older held token response. Retained checkpoint records
+are not active accounts. Pi explicit remove still has its real revoke path.
+
+Friend OS is now confirmed Windows, server Linux; directory-fsync evidence remains
+fault-injection on Linux, not a Windows device test or sole-cause/auth-success proof.
+All report dates/times use JST. These follow-ups remain local for second review.
