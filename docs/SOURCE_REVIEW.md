@@ -257,3 +257,40 @@ fingerprint emulation or gateway/DB port; native host sign-out still has no
 supported plugin callback to erase its inaccessible checkpoint residue. The
 user reports Windows login now works, while our own cross-platform fsync testing
 remains fault injection, not Windows hardware testing.
+
+### 5c18f61 follow-up: project bucket scope all the way into the consumer
+
+Independent review found the helper correctly implemented the original Go scope,
+but usage projection incorrectly unioned the entire group's families. The native
+`usageView` now projects **each bucket** with that scope. Same-group windows share
+a pool only when their exact model sets match. Group identity and model-set
+identity, not displayName alone, define the projection unit. Human pool labels
+are disambiguated for mixed/same-name scopes; fallback labels also get unique
+identities to avoid accidental UI suppression. Original bucket order is retained.
+Unknown bucket families establish no invented model coverage. Recognized family
+membership for an unrecognized window is exactly the source scope, but that raw
+window gets no fabricated rolling duration; Argon fallback detection still
+requires recognized summary windows, exactly as in original Go.
+
+Because Magpie `poolWindows` associates detail members **only by pool string**,
+backing rows are now emitted into every actual matching pool with that pool's
+member subset. A final-group overwrite cannot silently remove earlier members.
+Uncovered model aliases retain real reported or Unknown fallback pools, and
+empty groups establish no coverage. No model wire/thinking conversion, OAuth,
+health, persistence, host code or upstream code was changed in this follow-up.
+
+Original Go `antigravityQuotaScopeForModel(..., false)` expectations are compiled
+for the actual fixture layouts by `scripts/argon-source-oracle.py` into
+`quota-host-oracle.json`: 18 layouts, 144 masks. The regression runs each through
+the unmodified SHA-verified host and UI and compares both per-bucket `models`
+and real rendered pool `members`. This closes the previous helper-only gap,
+including the audited Argon `[false,true]` / ordinary Gemini `[true,false]`
+counterexample. It is still an offline compatibility test, not proof of the
+user's live group layout, reduced account risk or perfect equivalence.
+
+Oracle adapter is explicit in the fixture provenance: UI coverage uses the Go
+function's `known && scope(bucket)`. For an unknown model family Go returns
+`ScopeAll, false` as a conservative **enforcement** fallback; that is not evidence
+that its quota is shared with every reported UI pool. The unknown model instead
+retains its independent Unknown/model detail. Known models' per-bucket scopes
+are the original Go result. Quota-gate conservative behavior is unchanged.

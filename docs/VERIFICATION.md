@@ -265,7 +265,7 @@ Google, user credentials, remote updates, release, npm publish or host edits.
 
 ## 0.16.2 local Argon candidate (not pushed; awaiting independent review)
 
-- Final default offline runner: **43 groups, 42 PASS / 1 FAIL**. All legacy
+- Final default offline runner: **44 groups, 43 PASS / 1 FAIL**. All legacy
   scripts are run individually by that runner, so the known failure does not
   suppress later regressions. The unchanged failure is still
   `test-web-fetch.ts:scenarioLongFence`, original provenance/budget behavior;
@@ -300,3 +300,30 @@ python3 scripts/argon-source-oracle.py /path/to/codex2api-at-d8e1981
 python3 scripts/native-oracle.py /path/to/codex2api-at-d8e1981
 node scripts/verify-offline.mjs
 ```
+
+### Bucket-scope follow-up to independent review of 5c18f61 (local only)
+
+The previous host test used homogeneous groups and missed a real projection bug.
+The independent mixed-group counterexample was ported into
+`test-quota-bucket-projection.ts` and registered in the default runner. Before the
+production change, its real host consumer assertion failed: ordinary Gemini
+returned `[true,true]` instead of original Go `[true,false]`. The original failing
+log is retained locally at `.cache/quota-bucket-red.log`.
+
+The same unmodified pinned host and UI now pass **18 layouts / 144 original-Go
+per-model bucket masks**, not merely helper checks. For every summary bucket,
+both its outgoing model list and the actual UI's pool members match the original
+Go scope. Cases cover mixed/interleaved/three-family groups, same-name groups
+with different and identical member sets, same-family multiwindow, empty groups
+and labels, unrecognized bucket/window scopes, partial/missing summaries,
+missing fractions, and collisions with fallback names or generated labels.
+Unmapped/missing-family Unknown fallback remains visible. No weekly/5h duration
+is invented for an unknown window. Members of a backing associated with more
+than one real pool are retained in each, not overwritten by the final group.
+
+The original Argon merged/dedicated refresh/restart test, 39 native request
+captures, six tier labels, 287 native vectors and 30 family-helper oracle cases
+remain passing. Default static/security/format checks remain passing. The only
+full-run failure remains untouched `scenarioLongFence`; this is not an all-green
+or user-live-Google verification claim. This follow-up is again awaiting
+independent review; nothing has been pushed or published.

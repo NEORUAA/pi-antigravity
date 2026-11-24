@@ -21,6 +21,8 @@ globalThis.fetch=async(input,init={})=>{
  const json=(x,status=200)=>Response.json(x,{status});
  if(method==="loadCodeAssist")return json({cloudaicompanionProject:"project-"+t,currentTier:{id:"test-plan"},paidTier:{id:"test-plan",availableCredits:[{creditAmount:"12"}]}});
  if(process.env.MAGPIE_FIXTURE_ARGON && method==="fetchAvailableModels")return json({models:{"gemini-4-argon-high":{displayName:"Gemini 4 Argon (High)",quotaInfo:{remainingFraction:0.816}},"gemini-3.7-flash-tiered":{displayName:"Gemini 3.7 Flash (High)",quotaInfo:{remainingFraction:0.7}},"claude-sonnet-4-6":{quotaInfo:t==="C"?{}:{remainingFraction:0.4}},"future-model":{displayName:"Future (High)",quotaInfo:{remainingFraction:0.22}}}});
+ if(process.env.MAGPIE_FIXTURE_QUOTA_LAYOUT && method==="fetchAvailableModels")return json({models:{"gemini-3.7-flash-tiered":{displayName:"Gemini 3.7 Flash (High)",quotaInfo:{remainingFraction:.6}},"gemini-4-argon-high":{displayName:"Gemini 4 Argon (High)",quotaInfo:{remainingFraction:.42}},"claude-sonnet-4-6":{displayName:"Claude",quotaInfo:{}},"future-model":{}}});
+ if(process.env.MAGPIE_FIXTURE_QUOTA_LAYOUT && method==="retrieveUserQuotaSummary")return json({groups:JSON.parse(fs.readFileSync(process.env.MAGPIE_FIXTURE_QUOTA_LAYOUT,"utf8"))});
  if(method==="fetchAvailableModels")return json({models:{"gemini-3.7-flash-tiered":{quotaInfo:{remainingFraction:1}},"claude-sonnet-4-6":{quotaInfo:t==="C"?{}:{remainingFraction:0.4}},"gpt-oss-120b-medium":{quotaInfo:{remainingFraction:0.3}}}});
  if(method==="retrieveUserQuotaSummary"){
  const bucket=(id,fraction)=>({bucketId:id,window:"5h",remainingFraction:fraction,resetTime:new Date(Date.now()+3600000).toISOString()});

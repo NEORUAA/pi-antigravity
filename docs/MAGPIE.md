@@ -170,3 +170,10 @@ replaces the old groups, including across restart; a failure is not a new quota.
   Unknown models do not acquire invented tiers. The wire mapping is unchanged.
 - User reports the Windows machine can now log in after 0.16.1. This is field
   feedback, not our Windows hardware test or proof of any Google risk reduction.
+
+Mixed quota groups are projected per bucket, not as a shared family union. If
+upstream reuses a group name for different model sets, pool labels may now carry
+an `Argon`, `Gemini`, or ordinal qualifier. This separates identities for Magpie's
+UI; it does not create another allowance. Same-family 5h/week windows in the same
+group still share their real member set, while missing families retain Unknown
+or real per-model fallback. Empty groups establish no coverage.
