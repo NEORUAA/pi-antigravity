@@ -1,3 +1,7 @@
+import { validatedCredential } from "../auth/checkpoint.js";
+import { observeAccount } from "../auth/account-view.js";
+import { accountModelIds } from "../compat/account-catalog.js";
+import { resolveCodexModel } from "../compat/catalog.js";
 import { legacyProfile } from "../compat/profile.js";
 import { createHash } from "node:crypto";
 import type {
@@ -9,7 +13,11 @@ import type {
 } from "@earendil-works/pi-ai";
 import { getApiKey } from "../auth/index.js";
 import { DEFAULT_ENDPOINT, fetchAvailableModelsCatalog, parseApiKey } from "../client/index.js";
-import { ANTIGRAVITY_API, type AntigravityModelConfig } from "../types/types.js";
+import {
+  ANTIGRAVITY_API,
+  type AntigravityModelConfig,
+  type AntigravityOAuthCredentials,
+} from "../types/types.js";
 import { antigravityEnv, isRecord } from "../utils/util.js";
 import { buildAntigravityCatalog, resolvedCatalog, type AntigravityCatalog } from "./grouping.js";
 import {
@@ -79,6 +87,41 @@ export async function discoverAntigravityModels(
 export async function refreshAntigravityModels(
   context: RefreshModelsContext,
 ): Promise<AntigravityModelConfig[]> {
+  if (!legacyProfile()) {
+    if (context.credential?.type !== "oauth") return [];
+    const current: AntigravityOAuthCredentials = context.allowNetwork
+      ? context.credential
+      : validatedCredential(context.credential);
+    const observed = context.allowNetwork
+      ? await observeAccount(current, context.signal, Boolean(context.force))
+      : current;
+    const ids = observed.quota ? accountModelIds(observed.quota) : [];
+    const template = ANTIGRAVITY_MODELS[0];
+    const models = ids.map((id) => {
+      const known = ANTIGRAVITY_MODELS.find((m) => m.id === id);
+      return known
+        ? { ...known, name: `${id} (Antigravity · account)` }
+        : {
+            ...template,
+            id,
+            name: `${id} (Antigravity · account)`,
+            reasoning: false,
+            thinkingLevelMap: undefined,
+            input: ["text"] as ("text" | "image")[],
+          };
+    });
+    const catalog = {
+      models,
+      routing: Object.fromEntries(
+        ids.map((id) => [id, { defaultRequestId: resolveCodexModel(id)?.wire ?? id }]),
+      ),
+    };
+    applyAntigravityCatalog(catalog);
+    await context.publish({
+      persist: { models: toStoredModels(models) },
+    });
+    return models;
+  }
   const discoveryEnabled =
     legacyProfile() || antigravityEnv("DYNAMIC_DISCOVERY") === "1" || context.force;
   const checkedAt = discoveryEnabled ? hydrateAntigravityCatalog(context.stored) : 0;

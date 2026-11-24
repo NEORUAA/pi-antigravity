@@ -176,6 +176,8 @@ export async function boundedErrorBody(response: Response): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 export type GenerationDispatchOptions = {
+  /** Native hosts own account routing; never cross into Pi's active-account pool. */
+  accountPolicy?: "caller";
   credentials: AntigravityApiKey;
   model: string;
   build: (projectId: string) => object | Promise<object>;
@@ -193,8 +195,11 @@ export async function executeCodexGeneration(
   const refreshed = new Set<string>();
   for (;;) {
     options.signal?.throwIfAborted();
-    if (!accountAvailable(credentials.token, options.model)) {
-      const next = await failoverToNextAccount(tried, options.model);
+    if (options.accountPolicy !== "caller" && !accountAvailable(credentials.token, options.model)) {
+      const next =
+        options.accountPolicy === "caller"
+          ? undefined
+          : await failoverToNextAccount(tried, options.model);
       if (!next) throw new Error("Antigravity account is blocked or model quota is cooling down");
       credentials = next;
       tried.add(next.token);
@@ -206,7 +211,11 @@ export async function executeCodexGeneration(
     } catch (error) {
       options.signal?.throwIfAborted();
       if (!(error instanceof GenerationHTTPError)) throw error;
-      if (error.status === 401 && !refreshed.has(credentials.token)) {
+      if (
+        options.accountPolicy !== "caller" &&
+        error.status === 401 &&
+        !refreshed.has(credentials.token)
+      ) {
         refreshed.add(credentials.token);
         const next = await refreshAccountAfterUnauthorized(credentials.token);
         if (next && !tried.has(next.token)) {
@@ -216,16 +225,20 @@ export async function executeCodexGeneration(
           continue;
         }
       }
-      observeConsumerFailure(
-        credentials.token,
-        options.model,
-        error.status,
-        error.body,
-        error.headers,
-      );
+      if (options.accountPolicy !== "caller")
+        observeConsumerFailure(
+          credentials.token,
+          options.model,
+          error.status,
+          error.body,
+          error.headers,
+        );
       const quota = quotaSignal(error.status, error.body);
       if (quota?.kind !== "capacity" && (error.status === 429 || quota)) {
-        const next = await failoverToNextAccount(tried, options.model);
+        const next =
+          options.accountPolicy === "caller"
+            ? undefined
+            : await failoverToNextAccount(tried, options.model);
         if (next) {
           credentials = next;
           tried.add(next.token);
@@ -313,6 +326,7 @@ export function observeConsumerFailure(
   status: number,
   body: string,
   headers?: Headers,
+  write: typeof markAccountHealth = markAccountHealth,
 ): void {
   const quota = quotaSignal(status, body);
   const block = status === 403 ? /VALIDATION_REQUIRED|TOS_VIOLATION/.exec(body)?.[0] : undefined;
@@ -323,7 +337,7 @@ export function observeConsumerFailure(
     kind: block ?? quota?.kind ?? (status === 401 ? "auth" : status >= 500 ? "upstream" : "client"),
   };
   if (status !== 429 && !quota) {
-    markAccountHealth(token, model, { block, failure });
+    write(token, model, { block, failure });
     return;
   }
   let cooldown =
@@ -341,7 +355,7 @@ export function observeConsumerFailure(
     const value = /^\d+$/.test(raw.trim()) ? Number(raw) * 1000 : Date.parse(raw) - Date.now();
     if (Number.isFinite(value) && value > 0) cooldown = value;
   }
-  markAccountHealth(token, model, {
+  write(token, model, {
     failure,
     block,
     cooldownMs: Math.min(1_800_000, Math.max(1000, cooldown)),
@@ -382,7 +396,12 @@ export function consumerErrorStatus(error: Record<string, unknown>): number {
     ] ?? 502
   );
 }
-export function observeConsumerDocument(token: string, model: string, document: unknown): void {
+export function observeConsumerDocument(
+  token: string,
+  model: string,
+  document: unknown,
+  persist = true,
+): void {
   if (!isRecord(document)) return;
   const envelope =
     !Object.hasOwn(document, "error") && isRecord(document.response) ? document.response : document;
@@ -390,7 +409,7 @@ export function observeConsumerDocument(token: string, model: string, document: 
   const error = isRecord(envelope.error) ? envelope.error : {};
   const status = consumerErrorStatus(error);
   const body = JSON.stringify({ error });
-  observeConsumerFailure(token, model, status, body);
+  if (persist) observeConsumerFailure(token, model, status, body);
   throw new GenerationHTTPError(status, body, true);
 }
 /** Bound nonstream responses without a buffering .json() call. */

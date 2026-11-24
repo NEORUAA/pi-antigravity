@@ -91,3 +91,33 @@ Node 22.19.0, 24 and 26 all failed only the inherited `scripts/test-web-fetch.ts
 scenarioLongFence check; the other 23 legacy scripts and the first default suite
 passed. That remote run covers **e04eac9**, not the later follow-up changes.
 The unchanged failure was independently reproduced at the pinned Pi baseline.
+
+## Magpie/account view follow-up (0.16.0)
+
+- c2a `proxy/antigravity_models.go:26-431`: 34 public + 10 logical accepted
+  definitions versus raw-account published/admin projections.
+  `src/compat/account-catalog.ts` ports the algorithm; 334 seeded/edge vectors
+  compare directly against an extracted Go oracle, with source SHA256 recorded.
+- c2a `auth/store.go:12682-12699`: internal raw models excluded before projection;
+  `admin/antigravity_accounts.go` and quota-detail UI count account display rows,
+  not the complete compatibility definition registry. No fixed count of 27.
+- Magpie `9d11d5881f2887883aa92fe95dcfd16f9718f1c7`:
+  `internal/plugin/pi.js` intentionally handles providers only and drops usage;
+  `internal/plugin/host.js` native `auth.usage`, `provider.models`, scoped auth
+  writes, authorize/callback and Gemini fetch are exercised **without alteration**.
+- `src/magpie.ts`: native root/server entry; `extensions/` preserves Pi package
+  discovery. Runtime native import graph has no Pi SDK dependency (only built-in
+  Node modules plus existing Undici). Magpie commands/tools were not supplied by
+  its old Pi bridge; Pi commands and three optional tools remain available in Pi.
+- Account view reuses only a same-family **verified** fresh checkpoint; pending
+  validation can recover through Sync, never through an unverified ID token or
+  fabricated quota. Failed/deleted account writes remain fenced by the host.
+- Native generation persists classified HTTP/SSE health in the scoped host auth
+  metadata (not Pi's account store), including monotonic shared cooldowns and
+  restart recovery. It uses caller-owned account routing; it must not fail over to
+  the separate Pi account registry. TLS/HTTP/platform and gateway DB boundaries
+  remain as documented above.
+
+The earlier screenshot's 46 entries cannot be fully reproduced from the pinned
+loader: old plugin = 44 chat definitions + one image entry, old Pi bridge filters
+image entries. Additional entries/cache origins are not established from source.

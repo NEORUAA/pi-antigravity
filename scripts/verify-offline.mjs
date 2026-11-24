@@ -27,7 +27,9 @@ const differential = ["codex-reference-differential", process.execPath, ["script
 const application = ["codex-application-state-machines", process.execPath, ["scripts/run-ts.mjs", "scripts/test-codex-application.ts"]];
 const sync = ["codex-one-shot-sync", process.execPath, ["scripts/run-ts.mjs", "scripts/test-codex-sync.ts"]];
 const checkpoint = ["codex-durable-checkpoint", process.execPath, ["scripts/run-ts.mjs", "scripts/test-credential-checkpoint.ts"]];
-commands = process.argv.includes("--codex-only") ? [codexCommand, differential, application, sync, checkpoint] : [...commands, codexCommand, differential, application, sync, checkpoint];
+const accountCatalog = ["account-model-go-differential", process.execPath, ["scripts/run-ts.mjs", "scripts/test-account-catalog.ts"]];
+const magpie = ["magpie-real-host-contract", process.execPath, ["scripts/run-ts.mjs", "scripts/test-magpie-host.ts"]];
+commands = process.argv.includes("--codex-only") ? [codexCommand, differential, application, sync, checkpoint, accountCatalog, magpie] : [...commands, codexCommand, differential, application, sync, checkpoint, accountCatalog, magpie];
 const results = [];
 for (const [name, executable, args] of commands) {
   const result = spawnSync(executable, args, { cwd: root, env: environment, encoding: "utf8", timeout: 120_000, maxBuffer: 8 * 1024 * 1024 });

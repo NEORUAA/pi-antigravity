@@ -133,3 +133,43 @@ its inherited URL-reader failure remains a failure, not a suppressed green resul
 Public-fork local rerun: 2026-11-22 22:14 JST. All 32 command groups ran;
 only the unchanged baseline URL-reader script failed. Typecheck/lint/security
 and all five new suites passed. Runtime source is unchanged from `7ed8fd7`.
+
+## Magpie/account-catalog acceptance — 2026-11-24 JST
+
+Version **0.16.0**, Node 24.22.1, Yarn 4.18.0, Bun 1.4.4. This section
+supersedes earlier runtime-end statements for the account-view follow-up.
+
+- Default contracts: 19 groups PASS; existing Go request/schema vectors: 714 PASS;
+  existing quota-gate vectors: 558 PASS; application: 24 groups PASS; Sync: 11
+  PASS; durable checkpoint/restart: 18 PASS.
+- New account/public/admin projection: **334 independent pinned-Go vectors PASS**
+  plus internal/disabled/forbidden/logical backing eligibility cases. Generator:
+  `python3 scripts/generate-account-model-oracle.py /path/to/codex2api-at-d8e1981f`.
+- New **9 actual-host/Pi-loader integration groups PASS**: unmodified pinned MIT
+  Magpie native loader/usage dispatcher/model refresh; official Pi four-entry
+  discovery/loading; distinct/parallel account quota and models; missing/unknown/
+  403/temporary profile failures; pending verification recovery without re-login;
+  unverified imported cache rejection; restart; expired refresh/token rotation;
+  manual and real loopback OAuth callbacks; invalid state cleanup; in-flight
+  deletion fence; Gemini streaming/nonstreaming; tool-name restoration; wrong
+  account model rejection; before/after-output errors with no replay; cancellation;
+  scoped durable HTTP-200 quota health across usage refresh/restart without Pi
+  account-registry writes. Host fixture Git blobs are checked against provenance.
+- Typecheck/lint/security/format PASS; dependency install was scripts-disabled;
+  workspace lockfile changes only remove the two Pi SDK peer entries (SDK stays
+  a development dependency). CI explicitly installs pinned Bun for the real-host
+  test; that test is not silently skipped when Bun is missing.
+- Package dry-run includes native root/server and all four Pi wrappers; excludes
+  test fixtures/runtime stores/caches. No package/archive/release was published.
+- Original legacy tests remain **23/24 PASS**, only unchanged `scenarioLongFence`
+  fails. Complete `node scripts/verify-offline.mjs` runs **34 command groups** and
+  correctly exits nonzero for that baseline failure; this is not an all-green run.
+
+The first application contract was intentionally changed from “44 model entries
+without OAuth” to “44 definitions do not establish availability; no OAuth yields
+zero discovered account models.” It is independently backed by source goldens
+and real host refresh checks, not a relaxation to hide an unrelated failure.
+All Google calls in these tests are synthetic endpoint fixtures. Bun's fixture
+preload denies unrecognized hosts/RPCs; Node suites keep the offline guard and
+MockAgent. No personal auth store, real login/quota or user Magpie build was used.
+No account-risk reduction is verified. Prior platform/DB boundaries remain.

@@ -1,3 +1,4 @@
+import { legacyProfile } from "./compat/profile.js";
 import { OAuthRefreshError, markAccountHealth } from "./auth/index.js";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import {
@@ -196,7 +197,7 @@ export default function (pi: ExtensionAPI): void {
     name: PROVIDER_NAME,
     baseUrl: DEFAULT_ENDPOINT,
     api: ANTIGRAVITY_API,
-    models: [...initialCatalog.models, ...ANTIGRAVITY_IMAGE_MODELS],
+    models: [...(legacyProfile() ? initialCatalog.models : []), ...ANTIGRAVITY_IMAGE_MODELS],
     refreshModels: async (context: Parameters<typeof refreshAntigravityModels>[0]) => {
       const refreshed = await refreshAntigravityModels(context);
       return [...refreshed, ...ANTIGRAVITY_IMAGE_MODELS];

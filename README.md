@@ -10,7 +10,13 @@
 
 **pi-antigravity** is a [Pi Coding Agent](https://pi.dev) provider that lets Pi talk directly to Google Antigravity / Cloud Code Assist models — Gemini, plus the Claude and GPT-OSS models Antigravity also advertises. Sign in with Google, pick a model, and go. Under the hood it handles OAuth login, native streaming, model routing, and quota diagnostics itself, so it never shells out to an external Antigravity CLI.
 
-Using [OpenCode](https://opencode.ai) instead of Pi? Install the companion plugin [`@rahularya01/opencode-antigravity`](https://www.npmjs.com/package/@rahularya01/opencode-antigravity).
+**Magpie:** this fork's **0.16.0** package now has a native provider entry with
+account-scoped model refresh and `auth.usage`. Use your existing plugin installation
+entry with `https://github.com/NEORUAA/pi-antigravity` (main), then restart/reload
+the plugin. Do not use the Pi CLI command below as a Magpie command.
+See [Magpie installation and quota semantics](docs/MAGPIE.md).
+Pi still loads the original four extensions through its conventional `extensions/`
+directory; its commands/tools below remain Pi-specific.
 
 Want to equip Pi with MCP, web access, subagents, and todos? Install [`pi-essentials`](https://github.com/Rahularya01/pi-essentials) (currently in beta), an all-in-one companion extension designed for Pi.
 
@@ -33,13 +39,13 @@ Want to equip Pi with MCP, web access, subagents, and todos? Install [`pi-essent
 ## Requirements
 
 - Node **22.19.0 or later**
-- Pi Coding Agent and Pi AI version **0.80.0 or later**
+- Pi Coding Agent and Pi AI with conventional-directory package discovery (offline tested with **1.5.0**), **or Magpie** with the documented native OpenCode provider hooks
 - A Google account that can use the relevant Cloud Code Assist / Antigravity services
 - A browser to complete the Google sign-in. Same-machine is best (the browser hits the local callback automatically); on a remote/headless machine, complete sign-in anywhere and paste the resulting callback URL back into Pi (see [Troubleshooting](#troubleshooting)).
 
 ## Install
 
-Install this public fork from its `main` branch:
+For **Pi**, install this public fork from its `main` branch:
 
 ```bash
 pi install git:github.com/NEORUAA/pi-antigravity
@@ -171,6 +177,12 @@ for (const block of result.output) if (block.type === "image") image(block);
 The native API returns in-memory image/text blocks and does not save files. Input image blocks are accepted without local path loading. Extensions can pass `metadata: { aspectRatio: "16:9" }` through image options. Credentials are resolved by Pi. Backend usage is not currently reported by this adapter.
 
 ## Models and routing
+
+In the default profile, refresh publishes only models backed by the signed-in
+account's synchronized catalog. The 44 c2a compatibility definitions are not an
+entitlement list. Unknown future text IDs keep their upstream names; internal,
+retired, disabled and image-only entries are not advertised as chat models.
+A model count need not match another account or c2a's admin quota-row count.
 
 After you sign in, the provider refreshes its catalog from Antigravity (`fetchAvailableModels`) and groups runtime thinking variants into public Pi model IDs. Newly enabled models — for example Gemini 4 Argon or Gemini 4 Hydrogen — become selectable after that refresh without waiting for an extension release. A last-known-good cache is kept for offline/cold start; the static table below is only the conservative fallback and a routing reference.
 

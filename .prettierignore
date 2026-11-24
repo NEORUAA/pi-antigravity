@@ -3,3 +3,7 @@ scripts/**
 !scripts/test-web-fetch.ts
 !scripts/test-reader-foundations.ts
 !scripts/smoke-fetch-policy.ts
+
+# Preserve exact hashes of MIT-licensed host oracle fixtures.
+scripts/fixtures/magpie-host/host.js
+scripts/fixtures/magpie-host/pi.js

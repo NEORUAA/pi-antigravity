@@ -256,3 +256,20 @@ is part of this migration.
 
 See [VERIFICATION.md](VERIFICATION.md) for the actual run results and the original
 URL-reader failure reproduced unchanged at the pinned Pi baseline.
+
+## 0.16.0 Magpie account-view correction
+
+The account-facing integration now uses Magpie's supported native OpenCode root
+entry with real `auth.usage` and `provider.models`, not ignored Pi metadata. Pi
+keeps four conventional extensions. Default refresh no longer advertises 44
+pinned definitions as account entitlement. Published/admin model projection is
+independently checked against the pinned Go source; internal/disabled filtering
+and quota-family scopes are preserved. See [MAGPIE.md](MAGPIE.md).
+
+Magpie owns its scoped account selection, OAuth expiry refresh and removal. Its
+Gemini request adapter reuses this migration's consumer transport, project,
+headers, scaffolding/schema normalization, tool-name restoration, SSE/error and
+cancellation paths, without selecting Pi's unrelated active account. This is a
+supported loader integration, not a host patch, monkey-patch or local gateway.
+No real Google account/quota was exercised; no Go TLS equivalence or risk
+reduction is asserted. Source pins and existing architecture boundaries remain.
