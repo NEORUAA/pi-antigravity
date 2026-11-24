@@ -1,7 +1,7 @@
-# Magpie: native quota and account catalog (0.16.1 candidate)
+# Magpie: native quota and account catalog (0.16.2 local candidate)
 
 This revision is a **local review candidate**, not yet pushed/released. The existing
-GitHub `main` remains the prior version until separately approved publication.
+GitHub `main` remains **0.16.1** (`f5040da`) until separately approved publication.
 Do not repeatedly reinstall or re-login to work around a not-yet-published fix.
 
 ## Install / identify
@@ -11,7 +11,7 @@ Do not repeatedly reinstall or re-login to work around a not-yet-published fix.
    extension, not an HTTP API service or standalone executable. No base_url server
    needs to be started. No npm/release artifact is published by this change.
 2. Update/reload the installed package and restart its plugin runtime. Confirm the
-   installed candidate manifest is **0.16.1**, `main: ./src/magpie.ts`, with `./server` export.
+   published manifest is **0.16.1** (this local review branch is **0.16.2**), `main: ./src/magpie.ts`, with `./server` export.
    This matters: the previous Pi bridge could run chat but discarded usage hooks.
    No particular Magpie menu name or undocumented cache path is assumed here.
 3. Keep the existing Antigravity Google account if valid. Re-login is **not** the
@@ -148,3 +148,32 @@ OAuth login creates a separate family/epoch as appropriate and late old refresh
 cannot overwrite its credentials/health. Actual host regressions cover this.
 Pi's explicit remove command separately revokes its checkpoint; direct journal
 revoke unit tests are not claimed as native host signOut end-to-end evidence.
+
+## 0.16.2 local candidate: Argon quota and tier identity
+
+Not published yet. After approved publication, update the same GitHub plugin entry,
+reload the plugin runtime, and refresh that account; valid accounts need not log in
+again. Observations may be reused for **30 seconds**. A successful newer summary
+replaces the old groups, including across restart; a failure is not a new quota.
+
+- Summary scope follows **bucket IDs** and c2a's quota-family semantics, not a
+  vendor display label or equal percentages. Without a recognized Argon summary
+  bucket, Argon aliases/backing belong to Gemini. A genuinely separate Argon
+  summary remains separate when actually present. Compact cards no longer add a
+  second `Reported quota` pool for a covered Argon model; detailed raw model
+  observations remain available. Missing families still use real per-model data
+  or Unknown, never inferred weekly/5h allowances.
+- Public Argon Low/Medium/High use the **same high backing** in pinned c2a.
+  Their request `thinkingLevel` is respectively LOW/MEDIUM/HIGH. Public labels
+  now describe that catalog tier, rather than all copying `(High)` from the
+  backing. Explicit nonempty thinkingConfig still overrides automatic defaults.
+  Unknown models do not acquire invented tiers. The wire mapping is unchanged.
+- User reports the Windows machine can now log in after 0.16.1. This is field
+  feedback, not our Windows hardware test or proof of any Google risk reduction.
+
+Mixed quota groups are projected per bucket, not as a shared family union. If
+upstream reuses a group name for different model sets, pool labels may now carry
+an `Argon`, `Gemini`, or ordinal qualifier. This separates identities for Magpie's
+UI; it does not create another allowance. Same-family 5h/week windows in the same
+group still share their real member set, while missing families retain Unknown
+or real per-model fallback. Empty groups establish no coverage.

@@ -209,3 +209,88 @@ are not active accounts. Pi explicit remove still has its real revoke path.
 Friend OS is now confirmed Windows, server Linux; directory-fsync evidence remains
 fault-injection on Linux, not a Windows device test or sole-cause/auth-success proof.
 All report dates/times use JST. These follow-ups remain local for second review.
+
+## 0.16.2 local Argon projection repair (awaiting independent review)
+
+Two **presentation/projection** defects were reproduced using the actual pinned
+Magpie host + unmodified UI, not inferred from successful internal snapshots:
+`usageView` permanently excluded Argon from Gemini summary scope, and `modelView`
+reused the raw high backing's displayName for each public tier. Real 0.16.1
+usage-page data for the other families was already present; this is not a new
+claim that the user's live service omitted those families.
+
+Source evidence and implementation:
+
+- c2a `auth/antigravity_quota_family.go:20-22,25-59,68-109` defines shared Argon
+  fallback to Gemini when no recognized-window Argon bucket is present.
+  `modelQuotaFamily` is now shared between gate and UI; each reported group's
+  recognized bucket IDs establish coverage. It resolves public aliases to their
+  backing before scope/grouping. No percentage equality heuristic, blanket model
+  deletion or guessed windows. Unknown-family buckets do not establish invented
+  UI coverage. Existing conservative quota-gate enforcement remains unchanged.
+- c2a `frontend/src/lib/antigravityQuota.ts:summarizeQuotaGroups` renders the
+  actual summary groups; raw per-model detail is not evidence of a new separate
+  quota family. Covered backing details are retained as members of the real pool.
+- c2a `proxy/antigravity_models.go` / native normalize→convert→wrap maps all
+  `gemini-4-argon-low/medium/high` to `gemini-4-argon-high`, with distinct native
+  thinking levels; the existing request mapping is correct. The label projection
+  now takes a known explicit public tier from the catalog, not the backing label.
+  Unknown models retain their existing identity/label semantics.
+- The live c2a HEAD was read-only pinned as
+  `fb03ccd3d14eba9d962616f60841ad0a037e6f08` (9 commits after audited `d8e1981`).
+  GitHub compare shows none of the above quota-family, quota-summary or model
+  implementation files changed. No floating upgrade or new upstream behavior is
+  claimed. Original source and MIT/README-license provenance above still apply.
+
+Independent expectations: `scripts/argon-source-oracle.py` compiles original Go
+family/scope/window functions for 30 coverage masks (merged/dedicated/invalid
+window/unknown family). `scripts/native-oracle.py` adds 75 Argon request/count
+vectors: **287 total**, retaining every one of the original 212 input/expected
+pairs unchanged. Actual host-native capture checks the generated wire and request,
+including explicit camel/snake thinking precedence. The actual host/UI test
+checks dedicated→merged refresh in-process and across persisted restart, absence
+of the stale group, independent-account partial-summary allowances/Unknown, and
+six labels in two shared-backing tier families. No real Google call occurred.
+
+Unchanged boundaries: no zero-risk/perfect-equivalence claim; no Go TLS/HTTP2
+fingerprint emulation or gateway/DB port; native host sign-out still has no
+supported plugin callback to erase its inaccessible checkpoint residue. The
+user reports Windows login now works, while our own cross-platform fsync testing
+remains fault injection, not Windows hardware testing.
+
+### 5c18f61 follow-up: project bucket scope all the way into the consumer
+
+Independent review found the helper correctly implemented the original Go scope,
+but usage projection incorrectly unioned the entire group's families. The native
+`usageView` now projects **each bucket** with that scope. Same-group windows share
+a pool only when their exact model sets match. Group identity and model-set
+identity, not displayName alone, define the projection unit. Human pool labels
+are disambiguated for mixed/same-name scopes; fallback labels also get unique
+identities to avoid accidental UI suppression. Original bucket order is retained.
+Unknown bucket families establish no invented model coverage. Recognized family
+membership for an unrecognized window is exactly the source scope, but that raw
+window gets no fabricated rolling duration; Argon fallback detection still
+requires recognized summary windows, exactly as in original Go.
+
+Because Magpie `poolWindows` associates detail members **only by pool string**,
+backing rows are now emitted into every actual matching pool with that pool's
+member subset. A final-group overwrite cannot silently remove earlier members.
+Uncovered model aliases retain real reported or Unknown fallback pools, and
+empty groups establish no coverage. No model wire/thinking conversion, OAuth,
+health, persistence, host code or upstream code was changed in this follow-up.
+
+Original Go `antigravityQuotaScopeForModel(..., false)` expectations are compiled
+for the actual fixture layouts by `scripts/argon-source-oracle.py` into
+`quota-host-oracle.json`: 18 layouts, 144 masks. The regression runs each through
+the unmodified SHA-verified host and UI and compares both per-bucket `models`
+and real rendered pool `members`. This closes the previous helper-only gap,
+including the audited Argon `[false,true]` / ordinary Gemini `[true,false]`
+counterexample. It is still an offline compatibility test, not proof of the
+user's live group layout, reduced account risk or perfect equivalence.
+
+Oracle adapter is explicit in the fixture provenance: UI coverage uses the Go
+function's `known && scope(bucket)`. For an unknown model family Go returns
+`ScopeAll, false` as a conservative **enforcement** fallback; that is not evidence
+that its quota is shared with every reported UI pool. The unknown model instead
+retains its independent Unknown/model detail. Known models' per-bucket scopes
+are the original Go result. Quota-gate conservative behavior is unchanged.

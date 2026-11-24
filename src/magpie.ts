@@ -10,7 +10,7 @@ import {
 import { loginAntigravity, refreshAntigravityToken, getApiKey } from "./auth/oauth.js";
 import { observeAccount } from "./auth/account-view.js";
 import { accountModelIds, accountSupportsModel } from "./compat/account-catalog.js";
-import { CODEX_CATALOG, resolveCodexModel } from "./compat/catalog.js";
+import { CODEX_CATALOG, resolveCodexModel, codexModelDisplayName } from "./compat/catalog.js";
 import { codexRequestId } from "./compat/profile.js";
 import {
   normalizeNativeGeminiRequest,
@@ -32,7 +32,7 @@ import {
   observeConsumerFailure,
   readConsumerJson,
 } from "./client/codex-transport.js";
-import { quotaGate } from "./auth/quota-snapshot.js";
+import { quotaGate, bucketFamily, modelQuotaFamily } from "./auth/quota-snapshot.js";
 import { safeError } from "./utils/security.js";
 import { isCreditsEnabled } from "./utils/credits.js";
 import { isRecord } from "./utils/util.js";
@@ -153,89 +153,116 @@ function usageView(c: AntigravityOAuthCredentials) {
   }
   if (q.aiCreditsObserved && typeof q.aiCredits === "number" && Number.isFinite(q.aiCredits))
     out.balance = String(q.aiCredits) + " AI credits";
-  const pools = new Map<string, string>();
-  for (const group of q.groupsObserved ? q.groups : []) {
-    const pool = group.displayName;
-    const scope = /argon/i.test(pool)
-      ? ids.filter((id) => /argon/i.test(id))
-      : /gemini/i.test(pool)
-        ? ids.filter((id) => /^gemini/i.test(id) && !/argon/i.test(id))
-        : /claude|gpt/i.test(pool)
-          ? ids.filter((id) => /^(claude|gpt)/i.test(id))
-          : [];
-    if (group.buckets.length) for (const id of scope) pools.set(id, pool);
-    for (const bucket of group.buckets) {
-      const known =
-        bucket.fractionPresent &&
-        typeof bucket.remainingFraction === "number" &&
-        Number.isFinite(bucket.remainingFraction) &&
-        Date.now() - bucket.observedAt <= bucket.ttlSeconds * 1000;
-      out.windows.push({
-        name:
-          bucket.window === "5h"
-            ? "5 hours"
-            : bucket.window === "weekly"
-              ? "1 week"
-              : bucket.window,
-        pool,
-        models: scope,
-        ...(known
-          ? { used: (1 - Math.max(0, Math.min(1, bucket.remainingFraction!))) * 100 }
-          : { display: "Unknown" }),
-        resetsAt: bucket.resetTime || undefined,
-        span: bucket.window === "5h" ? 18000 : bucket.window === "weekly" ? 604800 : undefined,
-      });
+  // c2a scopes each bucket, not the union of the enclosing group's families.
+  // Magpie uses the *pool string* as identity for both windows and member rows.
+  // Keep same-group/same-member windows together, but never merge distinct scopes
+  // (or separate groups) merely because their vendor display names coincide.
+  const projected = (q.groupsObserved ? q.groups : []).flatMap((group, groupIndex) =>
+    group.buckets.map((bucket, bucketIndex) => {
+      const scopeFamily = bucketFamily(bucket.bucketId);
+      const scope = scopeFamily
+        ? ids.filter((id) => modelQuotaFamily(q, resolveCodexModel(id)?.wire ?? id) === scopeFamily)
+        : [];
+      return {
+        bucket,
+        scope,
+        key: JSON.stringify([groupIndex, scope.length ? [...scope].sort() : bucketIndex]),
+        base: group.displayName.trim() || "Reported quota",
+        label: scope.length
+          ? ({ gemini: "Gemini", argon: "Argon", "3p": "Claude / GPT" }[scopeFamily] ?? scopeFamily)
+          : bucket.bucketId || "Unknown scope",
+      };
+    }),
+  );
+  const units = new Map(projected.map((row) => [row.key, row]));
+  const nameCounts = new Map<string, number>();
+  for (const row of units.values()) nameCounts.set(row.base, (nameCounts.get(row.base) ?? 0) + 1);
+  const usedNames = new Set<string>();
+  const allocatePool = (base: string) => {
+    let name = base;
+    for (let suffix = 2; usedNames.has(name); suffix++) name = `${base} #${suffix}`;
+    usedNames.add(name);
+    return name;
+  };
+  const poolNames = new Map<string, string>();
+  const pools = new Map<string, Set<string>>();
+  for (const row of units.values()) {
+    const pool = allocatePool(
+      nameCounts.get(row.base) === 1 ? row.base : `${row.base} · ${row.label}`,
+    );
+    poolNames.set(row.key, pool);
+    for (const id of row.scope) {
+      if (!pools.has(id)) pools.set(id, new Set());
+      pools.get(id)!.add(pool);
     }
   }
-  // Always emit observed/backing model rows, including models missing quota.
-  // Real summary pools supersede their member rows in the compact card. A raw
-  // backing without a summary is its own model pool, NEVER an invented 5h/week.
+  for (const { bucket, scope, key } of projected) {
+    const known =
+      bucket.fractionPresent &&
+      typeof bucket.remainingFraction === "number" &&
+      Number.isFinite(bucket.remainingFraction) &&
+      Date.now() - bucket.observedAt <= bucket.ttlSeconds * 1000;
+    out.windows.push({
+      name:
+        bucket.window === "5h" ? "5 hours" : bucket.window === "weekly" ? "1 week" : bucket.window,
+      pool: poolNames.get(key),
+      models: scope,
+      ...(known
+        ? { used: (1 - Math.max(0, Math.min(1, bucket.remainingFraction!))) * 100 }
+        : { display: "Unknown" }),
+      resetsAt: bucket.resetTime || undefined,
+      span: bucket.window === "5h" ? 18000 : bucket.window === "weekly" ? 604800 : undefined,
+    });
+  }
+  // One backing can belong to multiple actual summary pools. Keep its members
+  // in each matching pool instead of letting the last group overwrite the first.
+  // Uncovered aliases retain their own observed/Unknown model pool, never a
+  // fabricated rolling window. Allocate that identity too: display names collide.
   const backing = new Map<string, string[]>();
   for (const id of ids) {
-    const wire = CODEX_CATALOG.find((d) => d.id === id)?.wire ?? id;
+    const wire = resolveCodexModel(id)?.wire ?? id;
     backing.set(wire, [...(backing.get(wire) ?? []), id]);
   }
-  for (const [wire, models] of backing) {
-    const m = q.models.find((row) => row.modelId === wire),
-      pool = pools.get(models[0]);
+  for (const [wire, aliases] of backing) {
+    const m = q.models.find((row) => row.modelId === wire);
+    const matched = new Set(aliases.flatMap((id) => [...(pools.get(id) ?? [])]));
+    const memberships = [...matched].map((pool) => ({
+      pool,
+      models: aliases.filter((id) => pools.get(id)?.has(pool)),
+      covered: true,
+    }));
+    const uncovered = aliases.filter((id) => !pools.has(id));
+    if (uncovered.length)
+      memberships.push({
+        pool: allocatePool(m?.displayName || wire),
+        models: uncovered,
+        covered: false,
+      });
     const known =
       m?.fractionPresent &&
       typeof m.remainingFraction === "number" &&
       Number.isFinite(m.remainingFraction) &&
       Date.now() - q.updatedAt <= 300000;
-    out.windows.push({
-      name: pool ? m?.displayName || wire : "Reported quota",
-      pool: pool ?? (m?.displayName || wire),
-      ...(pool
-        ? {
-            family: /^gemini/i.test(wire)
-              ? "Gemini"
-              : /^claude/i.test(wire)
-                ? "Claude"
-                : /^gpt/i.test(wire)
-                  ? "GPT"
-                  : wire,
-          }
-        : {}),
-      models,
-      ...(known
-        ? { used: (1 - Math.max(0, Math.min(1, m.remainingFraction!))) * 100 }
-        : { display: "Unknown" }),
-      resetsAt: m?.resetTime || undefined,
-    });
-    if (!pool) {
-      const summary = out.windows.at(-1)!;
+    const family = /^gemini/i.test(wire)
+      ? "Gemini"
+      : /^claude/i.test(wire)
+        ? "Claude"
+        : /^gpt/i.test(wire)
+          ? "GPT"
+          : wire;
+    for (const { pool, models, covered } of memberships) {
       out.windows.push({
-        ...summary,
-        name: m?.displayName || wire,
-        family: /^gemini/i.test(wire)
-          ? "Gemini"
-          : /^claude/i.test(wire)
-            ? "Claude"
-            : /^gpt/i.test(wire)
-              ? "GPT"
-              : wire,
+        name: covered ? m?.displayName || wire : "Reported quota",
+        pool,
+        ...(covered ? { family } : {}),
+        models,
+        ...(known
+          ? { used: (1 - Math.max(0, Math.min(1, m.remainingFraction!))) * 100 }
+          : { display: "Unknown" }),
+        resetsAt: m?.resetTime || undefined,
       });
+      if (!covered)
+        out.windows.push({ ...out.windows.at(-1)!, name: m?.displayName || wire, family });
     }
   }
   if (!out.windows.length && !out.balance) out.error = "Quota data unavailable";
@@ -253,7 +280,7 @@ function modelView(c: AntigravityOAuthCredentials) {
         id,
         {
           id,
-          name: metadata?.displayName || id,
+          name: codexModelDisplayName(id, metadata?.displayName),
           providerID: ID,
           api: { id, url: "https://antigravity.invalid/v1beta", npm: "@ai-sdk/google" },
           status: "active",

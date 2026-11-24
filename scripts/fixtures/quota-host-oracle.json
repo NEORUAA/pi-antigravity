@@ -1,0 +1,964 @@
+{
+  "commit": "d8e1981f1cc13d0b00fb4d4354e9c8777392319e",
+  "generator": "scripts/argon-source-oracle.py",
+  "uiCoverageAdapter": "known && scope(bucket): unknown model families retain independent Unknown fallback; this is not the gate conservative ScopeAll policy",
+  "sourceSHA256": {
+    "antigravity_types.go": "f427476b21f01359cc718a619c6a18353c15c5889fd769deb80d4c48c74488fc",
+    "antigravity_client.go": "98e538d65a12fe8e0508a202e8b6259df9993ed8bc18f400ab382be54efd03a8",
+    "antigravity_quota_family.go": "d762d042bc2e99b5fbaafe214a6e9247aba64e0d8c5a09358139e9e1632b7da0"
+  },
+  "cases": [
+    {
+      "name": "mixed",
+      "groups": [
+        {
+          "displayName": "Translated shared pool",
+          "buckets": [
+            {
+              "bucketId": "gemini-5h",
+              "window": "5h",
+              "remainingFraction": 0.8
+            },
+            {
+              "bucketId": "gemini-argon-weekly",
+              "window": "weekly",
+              "remainingFraction": 0.7
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "gemini-3.7-flash-low": [
+          true,
+          false
+        ],
+        "gemini-3.7-flash-medium": [
+          true,
+          false
+        ],
+        "gemini-3.7-flash-high": [
+          true,
+          false
+        ],
+        "gemini-4-argon-low": [
+          false,
+          true
+        ],
+        "gemini-4-argon-medium": [
+          false,
+          true
+        ],
+        "gemini-4-argon-high": [
+          false,
+          true
+        ],
+        "claude-sonnet-4-6": [
+          false,
+          false
+        ],
+        "future-model": [
+          false,
+          false
+        ]
+      }
+    },
+    {
+      "name": "same-name-distinct-members",
+      "groups": [
+        {
+          "displayName": "Shared name",
+          "buckets": [
+            {
+              "bucketId": "gemini-5h",
+              "window": "5h",
+              "remainingFraction": 0.8
+            }
+          ]
+        },
+        {
+          "displayName": "Shared name",
+          "buckets": [
+            {
+              "bucketId": "gemini-argon-weekly",
+              "window": "weekly",
+              "remainingFraction": 0.7
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "gemini-3.7-flash-low": [
+          true,
+          false
+        ],
+        "gemini-3.7-flash-medium": [
+          true,
+          false
+        ],
+        "gemini-3.7-flash-high": [
+          true,
+          false
+        ],
+        "gemini-4-argon-low": [
+          false,
+          true
+        ],
+        "gemini-4-argon-medium": [
+          false,
+          true
+        ],
+        "gemini-4-argon-high": [
+          false,
+          true
+        ],
+        "claude-sonnet-4-6": [
+          false,
+          false
+        ],
+        "future-model": [
+          false,
+          false
+        ]
+      }
+    },
+    {
+      "name": "same-family-multiwindow",
+      "groups": [
+        {
+          "displayName": "Gemini Models",
+          "buckets": [
+            {
+              "bucketId": "gemini-5h",
+              "window": "5h",
+              "remainingFraction": 0.8
+            },
+            {
+              "bucketId": "gemini-weekly",
+              "window": "weekly",
+              "remainingFraction": 0.6
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "gemini-3.7-flash-low": [
+          true,
+          true
+        ],
+        "gemini-3.7-flash-medium": [
+          true,
+          true
+        ],
+        "gemini-3.7-flash-high": [
+          true,
+          true
+        ],
+        "gemini-4-argon-low": [
+          true,
+          true
+        ],
+        "gemini-4-argon-medium": [
+          true,
+          true
+        ],
+        "gemini-4-argon-high": [
+          true,
+          true
+        ],
+        "claude-sonnet-4-6": [
+          false,
+          false
+        ],
+        "future-model": [
+          false,
+          false
+        ]
+      }
+    },
+    {
+      "name": "empty-groups",
+      "groups": [
+        {
+          "displayName": "Gemini Argon Models",
+          "buckets": []
+        },
+        {
+          "displayName": "Empty",
+          "buckets": []
+        },
+        {
+          "displayName": "Gemini Models",
+          "buckets": [
+            {
+              "bucketId": "gemini-5h",
+              "window": "5h",
+              "remainingFraction": 0.8
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "gemini-3.7-flash-low": [
+          true
+        ],
+        "gemini-3.7-flash-medium": [
+          true
+        ],
+        "gemini-3.7-flash-high": [
+          true
+        ],
+        "gemini-4-argon-low": [
+          true
+        ],
+        "gemini-4-argon-medium": [
+          true
+        ],
+        "gemini-4-argon-high": [
+          true
+        ],
+        "claude-sonnet-4-6": [
+          false
+        ],
+        "future-model": [
+          false
+        ]
+      }
+    },
+    {
+      "name": "unknown-scope",
+      "groups": [
+        {
+          "displayName": "Gemini Models",
+          "buckets": [
+            {
+              "bucketId": "unknown-weekly",
+              "window": "weekly",
+              "remainingFraction": 0.3
+            }
+          ]
+        },
+        {
+          "displayName": "Real summary",
+          "buckets": [
+            {
+              "bucketId": "gemini-5h",
+              "window": "5h",
+              "remainingFraction": 0.8
+            },
+            {
+              "bucketId": "gemini-argon-weekly",
+              "window": "weekly",
+              "remainingFraction": 0.7
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "gemini-3.7-flash-low": [
+          false,
+          true,
+          false
+        ],
+        "gemini-3.7-flash-medium": [
+          false,
+          true,
+          false
+        ],
+        "gemini-3.7-flash-high": [
+          false,
+          true,
+          false
+        ],
+        "gemini-4-argon-low": [
+          false,
+          false,
+          true
+        ],
+        "gemini-4-argon-medium": [
+          false,
+          false,
+          true
+        ],
+        "gemini-4-argon-high": [
+          false,
+          false,
+          true
+        ],
+        "claude-sonnet-4-6": [
+          false,
+          false,
+          false
+        ],
+        "future-model": [
+          false,
+          false,
+          false
+        ]
+      }
+    },
+    {
+      "name": "partial",
+      "groups": [
+        {
+          "displayName": "Gemini Models",
+          "buckets": [
+            {
+              "bucketId": "gemini-5h",
+              "window": "5h",
+              "remainingFraction": 0.8
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "gemini-3.7-flash-low": [
+          true
+        ],
+        "gemini-3.7-flash-medium": [
+          true
+        ],
+        "gemini-3.7-flash-high": [
+          true
+        ],
+        "gemini-4-argon-low": [
+          true
+        ],
+        "gemini-4-argon-medium": [
+          true
+        ],
+        "gemini-4-argon-high": [
+          true
+        ],
+        "claude-sonnet-4-6": [
+          false
+        ],
+        "future-model": [
+          false
+        ]
+      }
+    },
+    {
+      "name": "missing-gemini",
+      "groups": [
+        {
+          "displayName": "Claude and GPT Models",
+          "buckets": [
+            {
+              "bucketId": "3p-weekly",
+              "window": "weekly",
+              "remainingFraction": 0.4
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "gemini-3.7-flash-low": [
+          false
+        ],
+        "gemini-3.7-flash-medium": [
+          false
+        ],
+        "gemini-3.7-flash-high": [
+          false
+        ],
+        "gemini-4-argon-low": [
+          false
+        ],
+        "gemini-4-argon-medium": [
+          false
+        ],
+        "gemini-4-argon-high": [
+          false
+        ],
+        "claude-sonnet-4-6": [
+          true
+        ],
+        "future-model": [
+          false
+        ]
+      }
+    },
+    {
+      "name": "unrecognized-argon-window",
+      "groups": [
+        {
+          "displayName": "Mixed",
+          "buckets": [
+            {
+              "bucketId": "gemini-5h",
+              "window": "5h",
+              "remainingFraction": 0.8
+            },
+            {
+              "bucketId": "gemini-argon-daily",
+              "window": "daily",
+              "remainingFraction": 0.5
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "gemini-3.7-flash-low": [
+          true,
+          false
+        ],
+        "gemini-3.7-flash-medium": [
+          true,
+          false
+        ],
+        "gemini-3.7-flash-high": [
+          true,
+          false
+        ],
+        "gemini-4-argon-low": [
+          true,
+          false
+        ],
+        "gemini-4-argon-medium": [
+          true,
+          false
+        ],
+        "gemini-4-argon-high": [
+          true,
+          false
+        ],
+        "claude-sonnet-4-6": [
+          false,
+          false
+        ],
+        "future-model": [
+          false,
+          false
+        ]
+      }
+    },
+    {
+      "name": "unrecognized-gemini-window",
+      "groups": [
+        {
+          "displayName": "Gemini Models",
+          "buckets": [
+            {
+              "bucketId": "gemini-daily",
+              "window": "daily",
+              "remainingFraction": 0.5
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "gemini-3.7-flash-low": [
+          true
+        ],
+        "gemini-3.7-flash-medium": [
+          true
+        ],
+        "gemini-3.7-flash-high": [
+          true
+        ],
+        "gemini-4-argon-low": [
+          true
+        ],
+        "gemini-4-argon-medium": [
+          true
+        ],
+        "gemini-4-argon-high": [
+          true
+        ],
+        "claude-sonnet-4-6": [
+          false
+        ],
+        "future-model": [
+          false
+        ]
+      }
+    },
+    {
+      "name": "same-name-same-members",
+      "groups": [
+        {
+          "displayName": "Repeated",
+          "buckets": [
+            {
+              "bucketId": "gemini-5h",
+              "window": "5h",
+              "remainingFraction": 0.8
+            }
+          ]
+        },
+        {
+          "displayName": "Repeated",
+          "buckets": [
+            {
+              "bucketId": "gemini-weekly",
+              "window": "weekly",
+              "remainingFraction": 0.6
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "gemini-3.7-flash-low": [
+          true,
+          true
+        ],
+        "gemini-3.7-flash-medium": [
+          true,
+          true
+        ],
+        "gemini-3.7-flash-high": [
+          true,
+          true
+        ],
+        "gemini-4-argon-low": [
+          true,
+          true
+        ],
+        "gemini-4-argon-medium": [
+          true,
+          true
+        ],
+        "gemini-4-argon-high": [
+          true,
+          true
+        ],
+        "claude-sonnet-4-6": [
+          false,
+          false
+        ],
+        "future-model": [
+          false,
+          false
+        ]
+      }
+    },
+    {
+      "name": "fallback-name-collision",
+      "groups": [
+        {
+          "displayName": "future-model",
+          "buckets": [
+            {
+              "bucketId": "gemini-5h",
+              "window": "5h",
+              "remainingFraction": 0.8
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "gemini-3.7-flash-low": [
+          true
+        ],
+        "gemini-3.7-flash-medium": [
+          true
+        ],
+        "gemini-3.7-flash-high": [
+          true
+        ],
+        "gemini-4-argon-low": [
+          true
+        ],
+        "gemini-4-argon-medium": [
+          true
+        ],
+        "gemini-4-argon-high": [
+          true
+        ],
+        "claude-sonnet-4-6": [
+          false
+        ],
+        "future-model": [
+          false
+        ]
+      }
+    },
+    {
+      "name": "interleaved-same-family",
+      "groups": [
+        {
+          "displayName": "Interleaved",
+          "buckets": [
+            {
+              "bucketId": "gemini-5h",
+              "window": "5h",
+              "remainingFraction": 0.8
+            },
+            {
+              "bucketId": "gemini-argon-weekly",
+              "window": "weekly",
+              "remainingFraction": 0.7
+            },
+            {
+              "bucketId": "gemini-weekly",
+              "window": "weekly",
+              "remainingFraction": 0.6
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "gemini-3.7-flash-low": [
+          true,
+          false,
+          true
+        ],
+        "gemini-3.7-flash-medium": [
+          true,
+          false,
+          true
+        ],
+        "gemini-3.7-flash-high": [
+          true,
+          false,
+          true
+        ],
+        "gemini-4-argon-low": [
+          false,
+          true,
+          false
+        ],
+        "gemini-4-argon-medium": [
+          false,
+          true,
+          false
+        ],
+        "gemini-4-argon-high": [
+          false,
+          true,
+          false
+        ],
+        "claude-sonnet-4-6": [
+          false,
+          false,
+          false
+        ],
+        "future-model": [
+          false,
+          false,
+          false
+        ]
+      }
+    },
+    {
+      "name": "three-families",
+      "groups": [
+        {
+          "displayName": "Mixed three",
+          "buckets": [
+            {
+              "bucketId": "gemini-5h",
+              "window": "5h",
+              "remainingFraction": 0.8
+            },
+            {
+              "bucketId": "gemini-argon-weekly",
+              "window": "weekly",
+              "remainingFraction": 0.7
+            },
+            {
+              "bucketId": "3p-weekly",
+              "window": "weekly",
+              "remainingFraction": 0.4
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "gemini-3.7-flash-low": [
+          true,
+          false,
+          false
+        ],
+        "gemini-3.7-flash-medium": [
+          true,
+          false,
+          false
+        ],
+        "gemini-3.7-flash-high": [
+          true,
+          false,
+          false
+        ],
+        "gemini-4-argon-low": [
+          false,
+          true,
+          false
+        ],
+        "gemini-4-argon-medium": [
+          false,
+          true,
+          false
+        ],
+        "gemini-4-argon-high": [
+          false,
+          true,
+          false
+        ],
+        "claude-sonnet-4-6": [
+          false,
+          false,
+          true
+        ],
+        "future-model": [
+          false,
+          false,
+          false
+        ]
+      }
+    },
+    {
+      "name": "name-suffix-collision",
+      "groups": [
+        {
+          "displayName": "Shared name",
+          "buckets": [
+            {
+              "bucketId": "gemini-5h",
+              "window": "5h",
+              "remainingFraction": 0.8
+            }
+          ]
+        },
+        {
+          "displayName": "Shared name",
+          "buckets": [
+            {
+              "bucketId": "gemini-argon-weekly",
+              "window": "weekly",
+              "remainingFraction": 0.7
+            }
+          ]
+        },
+        {
+          "displayName": "Shared name \u00b7 Gemini",
+          "buckets": [
+            {
+              "bucketId": "3p-weekly",
+              "window": "weekly",
+              "remainingFraction": 0.4
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "gemini-3.7-flash-low": [
+          true,
+          false,
+          false
+        ],
+        "gemini-3.7-flash-medium": [
+          true,
+          false,
+          false
+        ],
+        "gemini-3.7-flash-high": [
+          true,
+          false,
+          false
+        ],
+        "gemini-4-argon-low": [
+          false,
+          true,
+          false
+        ],
+        "gemini-4-argon-medium": [
+          false,
+          true,
+          false
+        ],
+        "gemini-4-argon-high": [
+          false,
+          true,
+          false
+        ],
+        "claude-sonnet-4-6": [
+          false,
+          false,
+          true
+        ],
+        "future-model": [
+          false,
+          false,
+          false
+        ]
+      }
+    },
+    {
+      "name": "empty-label",
+      "groups": [
+        {
+          "displayName": "",
+          "buckets": [
+            {
+              "bucketId": "gemini-5h",
+              "window": "5h",
+              "remainingFraction": 0.8
+            },
+            {
+              "bucketId": "gemini-argon-weekly",
+              "window": "weekly",
+              "remainingFraction": 0.7
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "gemini-3.7-flash-low": [
+          true,
+          false
+        ],
+        "gemini-3.7-flash-medium": [
+          true,
+          false
+        ],
+        "gemini-3.7-flash-high": [
+          true,
+          false
+        ],
+        "gemini-4-argon-low": [
+          false,
+          true
+        ],
+        "gemini-4-argon-medium": [
+          false,
+          true
+        ],
+        "gemini-4-argon-high": [
+          false,
+          true
+        ],
+        "claude-sonnet-4-6": [
+          false,
+          false
+        ],
+        "future-model": [
+          false,
+          false
+        ]
+      }
+    },
+    {
+      "name": "repeated-unknown",
+      "groups": [
+        {
+          "displayName": "Unknown",
+          "buckets": [
+            {
+              "bucketId": "unknown-weekly",
+              "window": "weekly",
+              "remainingFraction": 0.3
+            },
+            {
+              "bucketId": "unknown-weekly",
+              "window": "weekly",
+              "remainingFraction": 0.3
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "gemini-3.7-flash-low": [
+          false,
+          false
+        ],
+        "gemini-3.7-flash-medium": [
+          false,
+          false
+        ],
+        "gemini-3.7-flash-high": [
+          false,
+          false
+        ],
+        "gemini-4-argon-low": [
+          false,
+          false
+        ],
+        "gemini-4-argon-medium": [
+          false,
+          false
+        ],
+        "gemini-4-argon-high": [
+          false,
+          false
+        ],
+        "claude-sonnet-4-6": [
+          false,
+          false
+        ],
+        "future-model": [
+          false,
+          false
+        ]
+      }
+    },
+    {
+      "name": "missing-fraction",
+      "groups": [
+        {
+          "displayName": "Mixed",
+          "buckets": [
+            {
+              "bucketId": "gemini-5h",
+              "window": "5h",
+              "remainingFraction": null
+            },
+            {
+              "bucketId": "gemini-argon-weekly",
+              "window": "weekly",
+              "remainingFraction": 0.7
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "gemini-3.7-flash-low": [
+          true,
+          false
+        ],
+        "gemini-3.7-flash-medium": [
+          true,
+          false
+        ],
+        "gemini-3.7-flash-high": [
+          true,
+          false
+        ],
+        "gemini-4-argon-low": [
+          false,
+          true
+        ],
+        "gemini-4-argon-medium": [
+          false,
+          true
+        ],
+        "gemini-4-argon-high": [
+          false,
+          true
+        ],
+        "claude-sonnet-4-6": [
+          false,
+          false
+        ],
+        "future-model": [
+          false,
+          false
+        ]
+      }
+    },
+    {
+      "name": "empty",
+      "groups": [],
+      "expected": {
+        "gemini-3.7-flash-low": [],
+        "gemini-3.7-flash-medium": [],
+        "gemini-3.7-flash-high": [],
+        "gemini-4-argon-low": [],
+        "gemini-4-argon-medium": [],
+        "gemini-4-argon-high": [],
+        "claude-sonnet-4-6": [],
+        "future-model": []
+      }
+    }
+  ]
+}

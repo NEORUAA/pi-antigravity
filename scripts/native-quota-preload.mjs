@@ -3,6 +3,9 @@ import fs from "node:fs";
 import { mock } from "bun:test";
 import * as undici from "undici";
 
+// Advance only this isolated host fixture clock past the 30s observation cache.
+const fixtureNow=Date.now;
+if(process.env.MAGPIE_FIXTURE_ARGON)Date.now=()=>fixtureNow()+(fs.existsSync(process.env.MAGPIE_FIXTURE_ARGON)?31000:0);
 const tag=(value)=>/fixture-([A-Z])/.exec(String(value))?.[1]??"A";
 globalThis.fetch=async(input,init={})=>{
  const url=new URL(typeof input==="string"?input:input.url??String(input));
@@ -14,13 +17,17 @@ globalThis.fetch=async(input,init={})=>{
  const method=url.pathname.split(":").pop();
  const payload=JSON.parse(init.body??"{}");
  const scenario=JSON.stringify(payload.request?.contents??[]);
- if(process.env.MAGPIE_FIXTURE_CALLS)fs.appendFileSync(process.env.MAGPIE_FIXTURE_CALLS,JSON.stringify({tag:t,method})+"\n");
+ if(process.env.MAGPIE_FIXTURE_CALLS)fs.appendFileSync(process.env.MAGPIE_FIXTURE_CALLS,JSON.stringify({tag:t,method,...(process.env.MAGPIE_FIXTURE_ARGON?{request:payload}: {})})+"\n");
  const json=(x,status=200)=>Response.json(x,{status});
  if(method==="loadCodeAssist")return json({cloudaicompanionProject:"project-"+t,currentTier:{id:"test-plan"},paidTier:{id:"test-plan",availableCredits:[{creditAmount:"12"}]}});
+ if(process.env.MAGPIE_FIXTURE_ARGON && method==="fetchAvailableModels")return json({models:{"gemini-4-argon-high":{displayName:"Gemini 4 Argon (High)",quotaInfo:{remainingFraction:0.816}},"gemini-3.7-flash-tiered":{displayName:"Gemini 3.7 Flash (High)",quotaInfo:{remainingFraction:0.7}},"claude-sonnet-4-6":{quotaInfo:t==="C"?{}:{remainingFraction:0.4}},"future-model":{displayName:"Future (High)",quotaInfo:{remainingFraction:0.22}}}});
+ if(process.env.MAGPIE_FIXTURE_QUOTA_LAYOUT && method==="fetchAvailableModels")return json({models:{"gemini-3.7-flash-tiered":{displayName:"Gemini 3.7 Flash (High)",quotaInfo:{remainingFraction:.6}},"gemini-4-argon-high":{displayName:"Gemini 4 Argon (High)",quotaInfo:{remainingFraction:.42}},"claude-sonnet-4-6":{displayName:"Claude",quotaInfo:{}},"future-model":{}}});
+ if(process.env.MAGPIE_FIXTURE_QUOTA_LAYOUT && method==="retrieveUserQuotaSummary")return json({groups:JSON.parse(fs.readFileSync(process.env.MAGPIE_FIXTURE_QUOTA_LAYOUT,"utf8"))});
  if(method==="fetchAvailableModels")return json({models:{"gemini-3.7-flash-tiered":{quotaInfo:{remainingFraction:1}},"claude-sonnet-4-6":{quotaInfo:t==="C"?{}:{remainingFraction:0.4}},"gpt-oss-120b-medium":{quotaInfo:{remainingFraction:0.3}}}});
  if(method==="retrieveUserQuotaSummary"){
  const bucket=(id,fraction)=>({bucketId:id,window:"5h",remainingFraction:fraction,resetTime:new Date(Date.now()+3600000).toISOString()});
- return json({groups:[{displayName:"Gemini Models",buckets:[bucket("gemini",1),{...bucket("gemini-week",0.7),window:"weekly"}]},...(t==="A"?[{displayName:"Claude and GPT Models",buckets:[bucket("thirdparty",0.25),{...bucket("thirdparty-week",0.5),window:"weekly"}]}]:[])]});
+ const argon=process.env.MAGPIE_FIXTURE_ARGON && !fs.existsSync(process.env.MAGPIE_FIXTURE_ARGON);
+ return json({groups:[...(argon?[{displayName:"Gemini Argon Models",buckets:[{...bucket("gemini-argon-weekly",0.9),window:"weekly"}]}]:[]),{displayName:"Gemini Models",buckets:[bucket("gemini",1),{...bucket("gemini-week",0.7),window:"weekly"}]},...(t==="A"?[{displayName:"Claude and GPT Models",buckets:[bucket("3p-5h",0.25),{...bucket("3p-weekly",0.5),window:"weekly"}]}]:[])]});
  }
  if(["generateContent","streamGenerateContent"].includes(method)) {
  const event={response:{candidates:[{content:{role:"model",parts:[scenario.includes("fixture-tool")?{functionCall:{name:payload.request.tools[0].functionDeclarations[0].name,args:{value:1}}}:{text:"fixture"}]},finishReason:"STOP"}]}};
