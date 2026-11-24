@@ -1858,8 +1858,6 @@ __metadata:
     typescript-eslint: "npm:^8.72.1"
     undici: "npm:^8.12.4"
   peerDependencies:
-    "@earendil-works/pi-ai": ">=0.80.0"
-    "@earendil-works/pi-coding-agent": ">=0.80.0"
     typebox: "*"
   languageName: unknown
   linkType: soft

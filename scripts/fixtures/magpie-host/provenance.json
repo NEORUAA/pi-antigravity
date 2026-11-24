@@ -1,0 +1,13 @@
+{
+  "repository": "https://github.com/yetone/magpie",
+  "commit": "9d11d5881f2887883aa92fe95dcfd16f9718f1c7",
+  "files": {
+    "host.js": "internal/plugin/host.js",
+    "pi.js": "internal/plugin/pi.js"
+  },
+  "purpose": "Unmodified MIT-licensed real loader/dispatcher, offline integration fixture only; never shipped in package files",
+  "gitBlobSHA": {
+    "host.js": "1c7569ee94af92b9450bcaeef093e50d3ff95132",
+    "pi.js": "cd9ad0046a3f091f19a40089d32e6ba149246cf8"
+  }
+}

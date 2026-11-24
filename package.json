@@ -1,7 +1,7 @@
 {
   "name": "pi-antigravity",
-  "version": "0.15.0",
-  "description": "Personal Antigravity / Cloud Code Assist provider for Pi Coding Agent",
+  "version": "0.16.0",
+  "description": "Antigravity consumer provider for Magpie and Pi, with account-scoped quota and models",
   "author": "Rahul Arya",
   "license": "MIT",
   "repository": {
@@ -13,21 +13,26 @@
     "url": "https://github.com/NEORUAA/pi-antigravity/issues"
   },
   "type": "module",
-  "main": "./src/index.ts",
+  "main": "./src/magpie.ts",
   "keywords": [
-    "pi-package",
-    "pi-extension",
     "antigravity",
     "google",
     "oauth",
-    "provider"
+    "provider",
+    "opencode-plugin",
+    "magpie"
   ],
   "files": [
     "LICENSE",
     "README.md",
     "docs/reader-guarantees.md",
     "src",
-    "tsconfig.json"
+    "tsconfig.json",
+    "extensions",
+    "docs/CODEX_PARITY.md",
+    "docs/VERIFICATION.md",
+    "docs/MAGPIE.md",
+    "docs/SOURCE_REVIEW.md"
   ],
   "packageManager": "yarn@4.18.0+sha512.fcb8716fe7cd0eece141ffc18b92193a9df9204c1ba83189c288835223fc0bbe64af473bab0d5e9927a7daeb5caf2bb07eb2787cc9338ca040ea125f2a1f2f7e",
   "engines": {
@@ -49,17 +54,7 @@
     "test:legacy": "node scripts/run-ts.mjs scripts/test-sanitize-text.ts && node scripts/run-ts.mjs scripts/test-model-routing.ts && node scripts/run-ts.mjs scripts/test-model-discovery.ts && node scripts/run-ts.mjs scripts/test-usage-formatter.ts && node scripts/run-ts.mjs scripts/test-model-pricing.ts && node scripts/run-ts.mjs scripts/test-stream-sse.ts && node scripts/run-ts.mjs scripts/test-stream-header-deadline.ts && node scripts/run-ts.mjs scripts/test-http-proxy.ts && node scripts/run-ts.mjs scripts/test-oauth-fetch.ts && node scripts/run-ts.mjs scripts/test-image-gen.ts && node scripts/run-ts.mjs scripts/test-native-images.ts && node scripts/run-ts.mjs scripts/test-transcript-context.ts && node scripts/run-ts.mjs scripts/test-inline-system.ts && node scripts/run-ts.mjs scripts/test-accounts.ts && node scripts/run-ts.mjs scripts/test-search.ts && node scripts/run-ts.mjs scripts/test-search-citations.ts && node scripts/run-ts.mjs scripts/test-web-fetch.ts && node scripts/run-ts.mjs scripts/test-reader-foundations.ts && node scripts/run-ts.mjs scripts/test-extra-tools-toggle.ts && node scripts/run-ts.mjs scripts/test-fetch-tool-toggle.ts && node scripts/run-ts.mjs scripts/test-provider-registration.ts && node scripts/run-ts.mjs scripts/test-stream-recovery.ts && node scripts/run-ts.mjs scripts/test-capacity-retry.ts && node scripts/run-ts.mjs scripts/test-enterprise-and-capacity.ts",
     "test:codex": "node scripts/verify-offline.mjs --codex-only"
   },
-  "pi": {
-    "extensions": [
-      "./src/index.ts",
-      "./src/features/google-search.ts",
-      "./src/features/read-url-content.ts",
-      "./src/features/generate-image.ts"
-    ]
-  },
   "peerDependencies": {
-    "@earendil-works/pi-ai": ">=0.80.0",
-    "@earendil-works/pi-coding-agent": ">=0.80.0",
     "typebox": "*"
   },
   "devDependencies": {
@@ -86,5 +81,10 @@
     "undici": "8.12.4",
     "minimatch": "11.0.3"
   },
-  "private": true
+  "private": true,
+  "exports": {
+    ".": "./src/magpie.ts",
+    "./server": "./src/magpie.ts",
+    "./pi": "./src/index.ts"
+  }
 }

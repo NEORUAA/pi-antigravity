@@ -31,11 +31,11 @@ function errorBody(code: number, reason?: string) { return { error: { code, stat
 function sse(documents: unknown[]) { return new Response(documents.map((document) => `data: ${JSON.stringify(document)}\n\n`).join("")); }
 const delta = { response: { candidates: [{ content: { parts: [{ text: "already emitted" }] } }] } };
 try {
-  await test("pinned models registered without automatic discovery traffic", async () => {
+  await test("pinned definitions do not advertise availability without an OAuth account", async () => {
     assert.deepEqual(ANTIGRAVITY_MODELS.map((item) => item.id), CODEX_CATALOG.map((item) => item.id));
     fresh(); let requests = 0; globalThis.fetch = (async () => { requests++; throw new Error("Unexpected network discovery"); }) as typeof fetch;
     const result = await refreshAntigravityModels({ stored: {}, allowNetwork: true, signal: new AbortController().signal, credential: { type: "api_key", key: JSON.stringify({ token: "fixture-a", projectId: "project-a" }) }, force: false, publish: async () => {} } as Parameters<typeof refreshAntigravityModels>[0]);
-    assert.equal(requests, 0); assert.equal(result.length, 44);
+    assert.equal(requests, 0); assert.equal(result.length, 0);
   });
   await test("schema adapter preserves literal Pi parameter names (documented Go bug compatibility exception)", () => {
     const properties = Object.fromEntries(["type", "format", "$defs", "required", "enum", "properties", "description"].map((name) => [name, { type: "string", enum: ["a", "b"] }]));
