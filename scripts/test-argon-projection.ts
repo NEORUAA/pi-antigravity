@@ -235,11 +235,14 @@ try {
       "covered Argon backing must not become a separate compact-card pool",
     );
     const gemini = result.usage.windows.find((w) => w.pool === "Gemini Models" && w.span === 18000);
-    assert(gemini.models.includes("gemini-4-argon-low"));
-    assert(gemini.models.includes("gemini-4-argon-medium"));
-    const argon = result.usage.windows.find(
-      (w) => w.models?.includes("gemini-4-argon-low") && w.family,
+    assert.deepEqual(gemini.models.filter((id) => id.startsWith("gemini-4-argon")), [
+      "gemini-4-argon",
+    ]);
+    const argonRows = result.usage.windows.filter(
+      (w) => w.models?.includes("gemini-4-argon") && w.family,
     );
+    assert.equal(argonRows.length, 1, "Argon's tiers share one observed quota row");
+    const [argon] = argonRows;
     assert.equal(argon.pool, "Gemini Models");
     assert(
       Math.abs(argon.used - 18.4) < 0.001,
@@ -266,22 +269,50 @@ try {
     listed.providers?.find((p) => p.id === "antigravity") ??
     listed.find?.((p) => p.id === "antigravity");
   assert(provider, JSON.stringify(listed));
-  for (const [prefix, label] of [
+  const levels = ["low", "medium", "high"];
+  for (const [id, label] of [
     ["gemini-4-argon", "Gemini 4 Argon"],
     ["gemini-3.7-flash", "Gemini 3.7 Flash"],
-  ])
-    for (const level of ["low", "medium", "high"]) {
-      const m = provider.models.find((m) => m.id === `${prefix}-${level}`);
-      assert(m, `${prefix}-${level}`);
-      assert.equal(m.name, `${label} (${level[0].toUpperCase() + level.slice(1)})`);
-    }
-  assert.equal(
-    provider.models.find((m) => m.id === "future-model").name,
-    "future-model",
-    "unknown models must not acquire fabricated tiers",
-  );
+  ]) {
+    const models = provider.models.filter((model) => model.id.startsWith(id));
+    assert.deepEqual(models.map((model) => model.id), [id]);
+    assert.equal(models[0].name, label);
+    assert.deepEqual([...models[0].variants].sort(), [...levels].sort());
+  }
+  const futureModel = provider.models.find((m) => m.id === "future-model");
+  assert.equal(futureModel.name, "future-model");
+  assert.deepEqual(futureModel.variants, [], "unknown models must not acquire fabricated tiers");
+  async function checkWireRequest(
+    model: string,
+    {
+      input,
+      expected,
+    }: { input: { request: object }; expected: { wire: string; request: object } },
+    headers?: Record<string, string>,
+  ) {
+    const r = await host.call("fetch", {
+      provider: "antigravity",
+      model,
+      npm: "@ai-sdk/google",
+      url: `https://antigravity.invalid/v1beta/models/${model}:generateContent`,
+      method: "POST",
+      headers,
+      body: Buffer.from(JSON.stringify(input.request)).toString("base64"),
+    });
+    assert.equal(r.events[0].status, 200, JSON.stringify(r));
+    const trace = readFileSync(calls, "utf8")
+      .trim()
+      .split("\n")
+      .map((x) => JSON.parse(x))
+      .filter((x) => x.method === "generateContent")
+      .at(-1).request;
+    delete trace.request.sessionId;
+    assert.equal(trace.model, expected.wire);
+    assert.deepEqual(trace.request, expected.request);
+  }
+
   let n = 0;
-  for (const level of ["low", "medium", "high"]) {
+  for (const level of levels) {
     const model = "gemini-4-argon-" + level;
     const vectors = oracle.filter(
       (v) =>
@@ -293,30 +324,17 @@ try {
           v.input.request.generation_config?.thinking_config),
     );
     assert(vectors.length >= 3);
-    for (const { input, expected } of vectors) {
-      const r = await host.call("fetch", {
-        provider: "antigravity",
-        model,
-        npm: "@ai-sdk/google",
-        url: `https://antigravity.invalid/v1beta/models/${model}:generateContent`,
-        method: "POST",
-        body: Buffer.from(JSON.stringify(input.request)).toString("base64"),
-      });
-      assert.equal(r.events[0].status, 200, JSON.stringify(r));
-      const trace = readFileSync(calls, "utf8")
-        .trim()
-        .split("\n")
-        .map((x) => JSON.parse(x))
-        .filter((x) => x.method === "generateContent")
-        .at(-1).request;
-      delete trace.request.sessionId;
-      assert.equal(trace.model, expected.wire);
-      assert.deepEqual(trace.request, expected.request);
+    for (const vector of vectors) {
+      await checkWireRequest(model, vector);
       n++;
     }
+    const thinking = vectors.find(({ input }) => Object.keys(input.request).length === 1);
+    assert(thinking);
+    await checkWireRequest("gemini-4-argon", thinking, { "X-Magpie-Effort": level });
+    n++;
   }
   console.log(
-    `PASS actual Magpie host/UI: dedicated→merged Argon quota refresh, account isolation, partial summary/Unknown, labels for six known tiers; ${n} original-Go native request captures including explicit thinking precedence`,
+    `PASS actual Magpie host/UI: dedicated→merged Argon quota refresh, account isolation, partial summary/Unknown, grouped models and native efforts; ${n} original-Go native request captures`,
   );
 } finally {
   await host.close();

@@ -569,24 +569,13 @@ export function resolveCodexModel(model: string, effort?: string): Variant | und
     definition.variants.find((item) => item.level === definition.defaultLevel)
   );
 }
-/** Public tier identity is not its shared backing's display name. Unknown models
- * retain vendor labels and never acquire a made-up effort tier. */
-export function codexModelDisplayName(model: string, displayName?: string): string {
-  if (!displayName) return model;
-  const definition = CODEX_CATALOG.find((entry) => entry.id === model);
-  const level = definition?.variants.length === 1 ? definition.variants[0].level : "";
-  if (!level) return displayName;
-  const base = displayName
+export function codexModelBaseName(displayName: string): string {
+  return displayName
     .replace(
-      /\s*(?:\((?:extra[- ]?)?(?:low|medium|high|xhigh|minimal)\)|\b(?:extra[- ]?)?(?:low|medium|high|xhigh|minimal))\s*$/i,
+      /\s*(?:\((?:extra[- ]?)?(?:low|medium|high|xhigh|minimal|thinking)\)|\s+(?:extra[- ]?)?(?:low|medium|high|xhigh|minimal))\s*$/i,
       "",
     )
     .trim();
-  const tier = level
-    .split(/[-_ ]/)
-    .map((part) => part[0].toUpperCase() + part.slice(1))
-    .join(" ");
-  return `${base || model} (${tier})`;
 }
 export function codexThinking(
   model: string,

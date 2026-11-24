@@ -10,10 +10,16 @@ import {
 import { loginAntigravity, refreshAntigravityToken, getApiKey } from "./auth/oauth.js";
 import { observeAccount } from "./auth/account-view.js";
 import { accountModelIds, accountSupportsModel } from "./compat/account-catalog.js";
-import { CODEX_CATALOG, resolveCodexModel, codexModelDisplayName } from "./compat/catalog.js";
+import {
+  CODEX_CATALOG,
+  resolveCodexModel,
+  codexModelBaseName,
+  type Variant,
+} from "./compat/catalog.js";
 import { codexRequestId } from "./compat/profile.js";
 import {
   normalizeNativeGeminiRequest,
+  nativeThinkingLevel,
   nativeTerminal,
   unwrapNative,
   nativeJSONModeRejection,
@@ -32,12 +38,51 @@ import {
   observeConsumerFailure,
   readConsumerJson,
 } from "./client/codex-transport.js";
-import { quotaGate, bucketFamily, modelQuotaFamily } from "./auth/quota-snapshot.js";
+import {
+  quotaGate,
+  bucketFamily,
+  modelQuotaFamily,
+  type QuotaSnapshot,
+} from "./auth/quota-snapshot.js";
 import { safeError } from "./utils/security.js";
 import { isCreditsEnabled } from "./utils/credits.js";
 import { isRecord } from "./utils/util.js";
 import type { AntigravityOAuthCredentials, GeminiRequestBody } from "./types/types.js";
 const ID = "antigravity";
+type ModelFamily = (typeof CODEX_CATALOG)[number];
+const modelFamilies = new Map(
+  CODEX_CATALOG.filter((model) => !model.wire).map((model) => [model.id, model]),
+);
+const tierId = (id: string, variant: Variant) => `${id}-${variant.level}`;
+const tierFamilies = new Map(
+  [...modelFamilies.values()].flatMap((model) =>
+    model.variants.map((variant) => [tierId(model.id, variant), model] as const),
+  ),
+);
+
+function availableVariants(model: ModelFamily, ids: ReadonlySet<string>): Variant[] {
+  return model.variants.filter((variant) => ids.has(tierId(model.id, variant)));
+}
+
+function magpieCatalog(quota: QuotaSnapshot) {
+  const ids = new Set(accountModelIds(quota));
+  const models = new Map<string, { variants: Variant[]; wires: string[] }>();
+  for (const id of ids) {
+    const model = tierFamilies.get(id);
+    if (model) {
+      if (models.has(model.id)) continue;
+      const variants = availableVariants(model, ids);
+      models.set(model.id, {
+        variants,
+        wires: [...new Set(variants.map((variant) => variant.wire))],
+      });
+    } else if (!modelFamilies.has(id.toLowerCase())) {
+      models.set(id, { variants: [], wires: [resolveCodexModel(id)?.wire ?? id] });
+    }
+  }
+  return models;
+}
+
 type GetAuth = () => Promise<unknown>;
 type Input = {
   client: { auth: { set: (value: { path: { id: string }; body: unknown }) => Promise<unknown> } };
@@ -134,8 +179,7 @@ async function recordFailure(
   );
 }
 function usageView(c: AntigravityOAuthCredentials) {
-  const q = c.quota,
-    ids = q ? accountModelIds(q) : [];
+  const q = c.quota;
   const out: {
     user?: string;
     plan?: string;
@@ -153,6 +197,10 @@ function usageView(c: AntigravityOAuthCredentials) {
   }
   if (q.aiCreditsObserved && typeof q.aiCredits === "number" && Number.isFinite(q.aiCredits))
     out.balance = String(q.aiCredits) + " AI credits";
+  const catalog = magpieCatalog(q);
+  const backing = new Map<string, string[]>();
+  for (const [id, model] of catalog)
+    for (const wire of model.wires) backing.set(wire, [...(backing.get(wire) ?? []), id]);
   // c2a scopes each bucket, not the union of the enclosing group's families.
   // Magpie uses the *pool string* as identity for both windows and member rows.
   // Keep same-group/same-member windows together, but never merge distinct scopes
@@ -160,13 +208,15 @@ function usageView(c: AntigravityOAuthCredentials) {
   const projected = (q.groupsObserved ? q.groups : []).flatMap((group, groupIndex) =>
     group.buckets.map((bucket, bucketIndex) => {
       const scopeFamily = bucketFamily(bucket.bucketId);
-      const scope = scopeFamily
-        ? ids.filter((id) => modelQuotaFamily(q, resolveCodexModel(id)?.wire ?? id) === scopeFamily)
+      const wires = scopeFamily
+        ? [...backing.keys()].filter((wire) => modelQuotaFamily(q, wire) === scopeFamily)
         : [];
+      const scope = [...new Set(wires.flatMap((wire) => backing.get(wire) ?? []))];
       return {
         bucket,
+        wires,
         scope,
-        key: JSON.stringify([groupIndex, scope.length ? [...scope].sort() : bucketIndex]),
+        key: JSON.stringify([groupIndex, wires.length ? wires.sort() : bucketIndex]),
         base: group.displayName.trim() || "Reported quota",
         label: scope.length
           ? ({ gemini: "Gemini", argon: "Argon", "3p": "Claude / GPT" }[scopeFamily] ?? scopeFamily)
@@ -185,16 +235,13 @@ function usageView(c: AntigravityOAuthCredentials) {
     return name;
   };
   const poolNames = new Map<string, string>();
-  const pools = new Map<string, Set<string>>();
+  const pools = new Map<string, string[]>();
   for (const row of units.values()) {
     const pool = allocatePool(
       nameCounts.get(row.base) === 1 ? row.base : `${row.base} · ${row.label}`,
     );
     poolNames.set(row.key, pool);
-    for (const id of row.scope) {
-      if (!pools.has(id)) pools.set(id, new Set());
-      pools.get(id)!.add(pool);
-    }
+    for (const wire of row.wires) pools.set(wire, [...(pools.get(wire) ?? []), pool]);
   }
   for (const { bucket, scope, key } of projected) {
     const known =
@@ -214,30 +261,15 @@ function usageView(c: AntigravityOAuthCredentials) {
       span: bucket.window === "5h" ? 18000 : bucket.window === "weekly" ? 604800 : undefined,
     });
   }
-  // One backing can belong to multiple actual summary pools. Keep its members
-  // in each matching pool instead of letting the last group overwrite the first.
-  // Uncovered aliases retain their own observed/Unknown model pool, never a
-  // fabricated rolling window. Allocate that identity too: display names collide.
-  const backing = new Map<string, string[]>();
-  for (const id of ids) {
-    const wire = resolveCodexModel(id)?.wire ?? id;
-    backing.set(wire, [...(backing.get(wire) ?? []), id]);
-  }
-  for (const [wire, aliases] of backing) {
+  for (const [wire, models] of backing) {
     const m = q.models.find((row) => row.modelId === wire);
-    const matched = new Set(aliases.flatMap((id) => [...(pools.get(id) ?? [])]));
-    const memberships = [...matched].map((pool) => ({
-      pool,
-      models: aliases.filter((id) => pools.get(id)?.has(pool)),
-      covered: true,
-    }));
-    const uncovered = aliases.filter((id) => !pools.has(id));
-    if (uncovered.length)
-      memberships.push({
-        pool: allocatePool(m?.displayName || wire),
-        models: uncovered,
-        covered: false,
-      });
+    const name =
+      models.length === 1 &&
+      modelFamilies.has(models[0]) &&
+      catalog.get(models[0])?.wires.length === 1
+        ? codexModelBaseName(m?.displayName ?? "") || models[0]
+        : m?.displayName || wire;
+    const matched = pools.get(wire);
     const known =
       m?.fractionPresent &&
       typeof m.remainingFraction === "number" &&
@@ -250,52 +282,58 @@ function usageView(c: AntigravityOAuthCredentials) {
         : /^gpt/i.test(wire)
           ? "GPT"
           : wire;
-    for (const { pool, models, covered } of memberships) {
+    for (const pool of matched ?? [allocatePool(name)]) {
       out.windows.push({
-        name: covered ? m?.displayName || wire : "Reported quota",
+        name: matched ? name : "Reported quota",
         pool,
-        ...(covered ? { family } : {}),
+        ...(matched ? { family } : {}),
         models,
         ...(known
           ? { used: (1 - Math.max(0, Math.min(1, m.remainingFraction!))) * 100 }
           : { display: "Unknown" }),
         resetsAt: m?.resetTime || undefined,
       });
-      if (!covered)
-        out.windows.push({ ...out.windows.at(-1)!, name: m?.displayName || wire, family });
+      if (!matched) out.windows.push({ ...out.windows.at(-1)!, name, family });
     }
   }
   if (!out.windows.length && !out.balance) out.error = "Quota data unavailable";
   return out;
 }
 function modelView(c: AntigravityOAuthCredentials) {
+  if (!c.quota) return {};
+  const metadata = new Map(c.quota.models.map((model) => [model.modelId, model]));
   return Object.fromEntries(
-    (c.quota ? accountModelIds(c.quota) : []).map((id) => {
-      const wire = resolveCodexModel(id)?.wire ?? id;
-      const metadata = c.quota?.models.find((m) => m.modelId === wire);
-      const images = metadata?.supportsImages === true;
-      const limit = (v: number | undefined) =>
-        typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0;
+    [...magpieCatalog(c.quota)].map(([id, { wires, variants }]) => {
+      const observed = wires.map((wire) => metadata.get(wire));
+      const images = observed.every((model) => model?.supportsImages === true);
+      const displayName = observed.find((model) => model?.displayName)?.displayName ?? "";
+      const limit = (key: "maxTokens" | "maxOutputTokens") => {
+        const limits = observed
+          .map((model) => model?.[key] ?? 0)
+          .filter((value) => Number.isFinite(value) && value > 0);
+        return limits.length ? Math.min(...limits) : 0;
+      };
       return [
         id,
         {
           id,
-          name: codexModelDisplayName(id, metadata?.displayName),
+          name: (variants.length ? codexModelBaseName(displayName) : displayName) || id,
           providerID: ID,
           api: { id, url: "https://antigravity.invalid/v1beta", npm: "@ai-sdk/google" },
           status: "active",
           cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
-          limit: { context: limit(metadata?.maxTokens), output: limit(metadata?.maxOutputTokens) },
+          limit: { context: limit("maxTokens"), output: limit("maxOutputTokens") },
           capabilities: {
             temperature: true,
-            reasoning:
-              metadata?.supportsThinking === true ||
-              CODEX_CATALOG.some((x) => x.id === id && x.variants.length > 0),
+            reasoning: variants.length > 0 || observed.some((model) => model?.supportsThinking),
             attachment: images,
             toolcall: true,
             input: { text: true, image: images },
             output: { text: true },
           },
+          ...(variants.length && {
+            variants: Object.fromEntries(variants.map(({ level }) => [level, {}])),
+          }),
           options: {},
         },
       ];
@@ -313,6 +351,7 @@ async function nativeFetch(
   let selectedPublic = "";
   let jsonModeRequested = false;
   let lease: ConsumerLease | undefined;
+  const responseHeaders = new Headers();
   const callerSignal =
     init?.signal ?? (url instanceof Request ? url.signal : undefined) ?? undefined;
   const controller = new AbortController(),
@@ -349,12 +388,37 @@ async function nativeFetch(
       return Response.json({ error: { message: "Gemini contents are required" } }, { status: 400 });
     const c = await observed(input, getAuth, signal);
     bound = c;
-    if (!c.quota || !accountSupportsModel(c.quota, id))
+    const model = modelFamilies.get(id.toLowerCase());
+    const variants =
+      c.quota && model ? availableVariants(model, new Set(accountModelIds(c.quota))) : [];
+    if (!c.quota || (model ? !variants.length : !accountSupportsModel(c.quota, id)))
       return Response.json(
         { error: { message: "Model is not in this account's synchronized catalog" } },
         { status: 404 },
       );
-    if (quotaGate(c.quota, id).blocked)
+    const headers = new Headers(
+      init?.headers ?? (url instanceof Request ? url.headers : undefined),
+    );
+    const effort = model
+      ? headers.get("x-magpie-effort")?.trim().toLowerCase() || nativeThinkingLevel(raw)
+      : "";
+    const variant =
+      variants.find((tier) => tier.level === (effort || model?.defaultLevel)) ??
+      (effort ? undefined : variants[0]);
+    if (effort && !variant) {
+      const supported = variants.map(({ level }) => `'${level}'`).join(", ");
+      return Response.json(
+        {
+          error: {
+            message: `Reasoning effort is not available for this account and model. Supported values are: ${supported}`,
+            param: "reasoning_effort",
+          },
+        },
+        { status: 400 },
+      );
+    }
+    const runtime = variant?.wire ?? resolveCodexModel(id)?.wire ?? id;
+    if (quotaGate(c.quota, runtime).blocked)
       return Response.json({ error: { message: "Model quota unavailable" } }, { status: 429 });
     lease = consumerLease(c);
     const health = consumerHealth(lease);
@@ -362,17 +426,19 @@ async function nativeFetch(
       health.blockedReason ||
       Math.max(
         health.cooldowns?.[id] ?? 0,
-        health.cooldowns?.[resolveCodexModel(id)?.wire ?? id] ?? 0,
-        health.cooldowns?.[family(id)] ?? 0,
+        health.cooldowns?.[runtime] ?? 0,
+        health.cooldowns?.[family(runtime)] ?? 0,
       ) > Date.now()
     )
       return Response.json(
         { error: { message: "Account blocked or model quota cooling down" } },
         { status: health.blockedReason ? 403 : 429 },
       );
-    const runtime = resolveCodexModel(id)?.wire ?? id,
-      request = structuredClone(raw) as unknown as GeminiRequestBody;
-    const names = normalizeNativeGeminiRequest(request, id, runtime);
+    const request = structuredClone(raw) as unknown as GeminiRequestBody;
+    const requestModel = model && variant ? tierId(model.id, variant) : id;
+    const names = normalizeNativeGeminiRequest(request, requestModel, runtime, Boolean(variant));
+    if (runtime !== id && match[2] !== "countTokens")
+      responseHeaders.set("x-magpie-sent-model", runtime);
     selected = runtime;
     jsonModeRequested = claudeJSONMode(request, runtime);
     const response = await executeCodexGeneration({
@@ -412,7 +478,7 @@ async function nativeFetch(
     if (match[2] === "countTokens") {
       const document = await readConsumerJson(response, 1024 * 1024);
       observeConsumerDocument(c.access, runtime, document, false);
-      return Response.json(unwrapNativeCountTokens(document));
+      return Response.json(unwrapNativeCountTokens(document), { headers: responseHeaders });
     }
     if (match[2] === "generateContent")
       return Response.json(
@@ -420,6 +486,7 @@ async function nativeFetch(
           (await readConsumerJson(response, 8 * 1024 * 1024)) as Record<string, unknown>,
           true,
         ),
+        { headers: responseHeaders },
       );
     const iterator = consumerEvents(response, undefined, signal);
     let first: IteratorResult<unknown, void> | undefined;
@@ -441,6 +508,8 @@ async function nativeFetch(
       void iterator.return(undefined).catch(() => {});
     };
     handedOff = true;
+    responseHeaders.set("content-type", "text/event-stream");
+    responseHeaders.set("cache-control", "no-cache");
     return new Response(
       new ReadableStream<Uint8Array>({
         start(controller) {
@@ -494,7 +563,7 @@ async function nativeFetch(
           await iterator.return(undefined).catch(() => {});
         },
       }),
-      { headers: { "content-type": "text/event-stream", "cache-control": "no-cache" } },
+      { headers: responseHeaders },
     );
   } catch (error) {
     if (signal?.aborted) throw signal.reason ?? error;
@@ -504,13 +573,13 @@ async function nativeFetch(
       if (rejection)
         return Response.json(
           { error: { ...rejection, message: safeError(new Error(String(rejection.message))) } },
-          { status: 400 },
+          { status: 400, headers: responseHeaders },
         );
     }
     const status = error instanceof GenerationHTTPError ? error.status : 502;
     return Response.json(
       { error: { message: safeError(error) } },
-      { status: status >= 400 && status <= 599 ? status : 502 },
+      { status: status >= 400 && status <= 599 ? status : 502, headers: responseHeaders },
     );
   } finally {
     if (!handedOff) cleanup();

@@ -209,6 +209,8 @@ for (const [name, sha] of Object.entries(hostProvenance.gitBlobSHA)) {
   );
 }
 const source = JSON.parse(readFileSync("scripts/fixtures/quota-host-oracle.json", "utf8"));
+const catalogId = (id: string) =>
+  id.replace(/^(gemini-3\.7-flash|gemini-4-argon)-(low|medium|high)$/, "$1");
 let comparisons = 0;
 for (const fixture of source.cases) {
   const host = start(fixture.groups);
@@ -218,10 +220,13 @@ for (const fixture of source.cases) {
     const buckets = fixture.groups.flatMap((g) => g.buckets);
     const summaries = result.usage.windows.slice(0, buckets.length);
     const compact = render.familyWindows(result.usage.windows);
-    assert.deepEqual([...result.models].sort(), Object.keys(fixture.expected).sort());
+    assert.deepEqual(
+      [...result.models].sort(),
+      [...new Set(Object.keys(fixture.expected).map(catalogId))].sort(),
+    );
     for (const [id, mask] of Object.entries(fixture.expected)) {
       assert.deepEqual(
-        summaries.map((w) => w.models.includes(id)),
+        summaries.map((w) => w.models.includes(catalogId(id))),
         mask,
         fixture.name + ": original-Go bucket mask for " + id,
       );
@@ -229,6 +234,11 @@ for (const fixture of source.cases) {
     }
     for (let i = 0; i < summaries.length; i++) {
       const row = summaries[i];
+      assert.equal(
+        row.models.length,
+        new Set(row.models).size,
+        fixture.name + ": grouped models appear once per quota window",
+      );
       if (typeof buckets[i].remainingFraction !== "number")
         assert.equal(
           row.display,

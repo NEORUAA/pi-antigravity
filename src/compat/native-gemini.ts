@@ -25,6 +25,22 @@ const values = (v: unknown): unknown[] => (Array.isArray(v) ? (v as unknown[]) :
 const text = (v: unknown) => (typeof v === "string" ? v : "");
 const nested = (o: Obj, key: string) => (isRecord(o[key]) ? o[key] : undefined);
 
+function thinkingConfig(request: Obj): Obj | undefined {
+  for (const key of ["generationConfig", "generation_config"]) {
+    const gen = nested(request, key);
+    const thinking = gen && (nested(gen, "thinkingConfig") ?? nested(gen, "thinking_config"));
+    if (thinking) return thinking;
+  }
+}
+
+export function nativeThinkingLevel(request: Obj): string {
+  const thinking = thinkingConfig(request);
+  const level = text(thinking?.thinkingLevel ?? thinking?.thinking_level)
+    .trim()
+    .toLowerCase();
+  return level === "thinking_level_unspecified" ? "" : level;
+}
+
 function describe(v: unknown, properties = false): void {
   if (Array.isArray(v)) {
     for (const x of v) describe(x, properties);
@@ -63,6 +79,7 @@ export function normalizeNativeGeminiRequest(
   request: Obj,
   publicModel: string,
   wire: string,
+  forceTier = false,
 ): Record<string, string> {
   const map = functionNameMap(allNames(rows(request.tools))),
     reverse: Record<string, string> = {};
@@ -132,7 +149,21 @@ export function normalizeNativeGeminiRequest(
     request.generationConfig = gen;
   }
   if (wire.startsWith("gemini-")) delete gen.maxOutputTokens;
-  if (!isRecord(gen.thinkingConfig) || !Object.keys(gen.thinkingConfig).length) {
+  if (forceTier) {
+    const original = thinkingConfig(request);
+    const includeThoughts = original?.includeThoughts ?? original?.include_thoughts;
+    for (const key of ["generationConfig", "generation_config"]) {
+      const cfg = nested(request, key);
+      if (!cfg) continue;
+      delete cfg.thinkingConfig;
+      delete cfg.thinking_config;
+    }
+    const thinking = codexThinking(publicModel, wire);
+    if (thinking) {
+      if (typeof includeThoughts === "boolean") thinking.includeThoughts = includeThoughts;
+      gen.thinkingConfig = thinking;
+    }
+  } else if (!isRecord(gen.thinkingConfig) || !Object.keys(gen.thinkingConfig).length) {
     const thinking = codexThinking(publicModel, wire);
     if (thinking) gen.thinkingConfig = thinking;
   }

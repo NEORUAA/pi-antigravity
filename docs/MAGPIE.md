@@ -27,6 +27,19 @@ Pi's official package manager instead discovers **four `extensions/*.ts` wrapper
 The root requires no runtime Pi SDK. `private: true` only blocks accidental npm
 publication; it does not prevent Git installs or a local package archive.
 
+## Native thinking levels
+
+The model list shows one entry per catalogued model family. Pick a model such as
+`gemini-4-neon`, then use Magpie's reasoning control to choose an available level.
+The plugin checks the selected account's catalog before routing to the upstream
+model and applies the corresponding thinking level or budget.
+
+After updating the plugin, refresh the provider's model list. If you use
+**Only selected** or have routing groups pinned to a suffixed ID such as
+`gemini-4-neon-high`, select `gemini-4-neon` and set **High** in the route or
+model preferences. Magpie stores selections by exact model ID. Direct requests
+that still name a legacy tier ID continue to use that tier.
+
 ## What the numbers mean
 
 - The underlying snapshot is synchronized through the existing verified Google
@@ -163,11 +176,9 @@ replaces the old groups, including across restart; a failure is not a new quota.
   second `Reported quota` pool for a covered Argon model; detailed raw model
   observations remain available. Missing families still use real per-model data
   or Unknown, never inferred weekly/5h allowances.
-- Public Argon Low/Medium/High use the **same high backing** in pinned c2a.
-  Their request `thinkingLevel` is respectively LOW/MEDIUM/HIGH. Public labels
-  now describe that catalog tier, rather than all copying `(High)` from the
-  backing. Explicit nonempty thinkingConfig still overrides automatic defaults.
-  Unknown models do not acquire invented tiers. The wire mapping is unchanged.
+- Argon shows one catalog entry with Low, Medium, and High. All three use the
+  same pinned upstream model with their own `thinkingLevel` and share one
+  per-model quota observation.
 - User reports the Windows machine can now log in after 0.16.1. This is field
   feedback, not our Windows hardware test or proof of any Google risk reduction.
 

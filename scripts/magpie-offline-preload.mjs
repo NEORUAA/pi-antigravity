@@ -14,16 +14,24 @@ globalThis.fetch=async(input,init={})=>{
  const method=url.pathname.split(":").pop();
  const payload=JSON.parse(init.body??"{}");
  const scenario=JSON.stringify(payload.request?.contents??[]);
- if(process.env.MAGPIE_FIXTURE_CALLS)fs.appendFileSync(process.env.MAGPIE_FIXTURE_CALLS,JSON.stringify({tag:t,method,request:payload.request})+"\n");
+ if(process.env.MAGPIE_FIXTURE_CALLS)fs.appendFileSync(process.env.MAGPIE_FIXTURE_CALLS,JSON.stringify({tag:t,method,model:payload.model,request:payload.request})+"\n");
  const json=(x,status=200)=>Response.json(x,{status});
  if(method==="loadCodeAssist")return json({cloudaicompanionProject:"project-"+t,currentTier:{id:"test-plan"},paidTier:{id:"test-plan",availableCredits:[{creditAmount:"12"}]}});
  if(method==="fetchAvailableModels"){
   if(t==="F")return json({error:{message:"fixture forbidden"}},403);
   if(t==="E")return json({models:{}});
+  if(t==="N")return json({
+   models:{
+    "gemini-4-neon-low":{displayName:"Gemini 4 Neon (Low)",quotaInfo:{remainingFraction:1}},
+    "gemini-4-neon-xhigh":{displayName:"Gemini 4 Neon (Xhigh)",quotaInfo:{remainingFraction:1}},
+    "claude-opus-5-5-low":{displayName:"Claude Opus 5.5 (Low)",quotaInfo:{remainingFraction:1}},
+    "claude-opus-5-5-high":{displayName:"Claude Opus 5.5 (High)",quotaInfo:{remainingFraction:1}},
+   },
+  });
   const models=t==="B"?{"claude-sonnet-4-6":{quotaInfo:{remainingFraction:0}}}:t==="U"?{"gemini-future-fixture":{quotaInfo:{}}}:{"gemini-3.7-flash-tiered":{quotaInfo:{remainingFraction:1}},"claude-sonnet-4-6":{quotaInfo:{remainingFraction:0.5}},"gemini-9-disabled":{},"chat_20706":{},"tab_fixture":{},"gemini-internal-fixture":{isInternal:true,quotaInfo:{remainingFraction:1}}};
   return json({models});
  }
- if(method==="retrieveUserQuotaSummary")return json({groups:["U","E","F"].includes(t)?[]:[{displayName:t==="B"?"Claude and GPT Models":"Gemini Models",buckets:[{bucketId:"fixture-5h",window:"5h",remainingFraction:t==="B"?0:1,resetTime:new Date(Date.now()+3600000).toISOString()}]}]});
+ if(method==="retrieveUserQuotaSummary")return json({groups:["U","E","F"].includes(t)?[]:[{displayName:t==="B"?"Claude and GPT Models":"Gemini Models",buckets:[{bucketId:t==="B"?"3p-fixture-5h":"gemini-fixture-5h",window:"5h",remainingFraction:t==="B"?0:1,resetTime:new Date(Date.now()+3600000).toISOString()}]}]});
  if(method==="countTokens")return json({response:{totalTokens:23}});
  if(["generateContent","streamGenerateContent"].includes(method)) {
  const event={response:{candidates:[{content:{role:"model",parts:[scenario.includes("fixture-tool")?{functionCall:{name:payload.request.tools[0].functionDeclarations[0].name,args:{value:1}}}:{text:"fixture"}]},finishReason:"STOP"}]}};

@@ -23,7 +23,7 @@ assert.equal(loaded.errors.length,0,JSON.stringify(loaded.errors));assert(loaded
 console.log("PASS real Pi package discovery and extension loader: four conventional entries");
 const authPath=join(temp,"plugin-auth.json");
 const seed=(t:string)=>({type:"oauth",access:"fixture-"+t,refresh:"fixture-"+t+"-refresh",expires:Date.now()+3600000});
-writeFileSync(authPath,JSON.stringify(Object.fromEntries(["A","B","U","E","F","T","R","D","I","X","Y"].map((t,i)=>[i===0?"antigravity":"antigravity#"+t,{...seed(t),...(t==="R"?{expires:1}: {}),...(t==="I"?{subject:"forged-subject",quota:normalizeQuotaModels({models:{"gemini-3.7-flash-tiered":{quotaInfo:{remainingFraction:1}}}},Date.now())}:{})}]))));
+writeFileSync(authPath,JSON.stringify(Object.fromEntries(["A","B","U","E","F","T","R","D","I","X","Y","N"].map((t,i)=>[i===0?"antigravity":"antigravity#"+t,{...seed(t),...(t==="R"?{expires:1}: {}),...(t==="I"?{subject:"forged-subject",quota:normalizeQuotaModels({models:{"gemini-3.7-flash-tiered":{quotaInfo:{remainingFraction:1}}}},Date.now())}:{})}]))));
 const calls=join(temp,"calls.jsonl");
 const syntheticEnv={...process.env};
 for(const key of Object.keys(syntheticEnv))if(/^(ANTIGRAVITY|NOAGY)_(CLIENT_ID|CLIENT_SECRET|OAUTH_CLIENTS|OAUTH_CLIENT_KEY|ACCESS_TOKEN|REFRESH_TOKEN|API_KEY)$/.test(key))delete syntheticEnv[key];
@@ -42,8 +42,9 @@ let host=start();
 try {
  await host.init();
  const a=await host.call("check",{provider:"antigravity"});
- assert.deepEqual(a.models,["gemini-3.7-flash-low","gemini-3.7-flash-medium","gemini-3.7-flash-high","claude-sonnet-4-6"]);
+ assert.deepEqual(a.models,["gemini-3.7-flash","claude-sonnet-4-6"]);
  assert.equal(a.usage.windows[0].used,0);assert.equal(a.usage.balance,"12 AI credits");
+ assert.deepEqual(a.usage.windows[0].models, ["gemini-3.7-flash"]);
  console.log("PASS actual Magpie native loader -> account model refresh -> auth.usage dispatcher");
  const b=await host.call("check",{provider:"antigravity",account:"antigravity#B"});
  assert.deepEqual(b.models,["claude-sonnet-4-6"]);assert.equal(b.usage.windows[0].used,100);
@@ -64,6 +65,63 @@ try {
  console.log("PASS host restart recovers the same scoped verified quota and account identity");
  const fetchRequest=(text:string,extra={})=>({provider:"antigravity",model:"gemini-3.7-flash-low",npm:"@ai-sdk/google",url:"https://antigravity.invalid/v1beta/models/gemini-3.7-flash-low:streamGenerateContent",method:"POST",body:Buffer.from(JSON.stringify({contents:[{role:"user",parts:[{text}]}],...extra})).toString("base64")});
  const textOf=(r:any)=>r.events.filter((e:any)=>e.event==="chunk").map((e:any)=>Buffer.from(e.data,"base64").toString()).join("");
+ const effortRequest = (model: string, effort?: string, account?: string, extra = {}, operation = "generateContent") => ({
+  ...fetchRequest("fixture-effort", extra),
+  model,
+  url: `https://antigravity.invalid/v1beta/models/${model}:${operation}`,
+  account,
+  headers: effort ? {"X-Magpie-Effort": effort} : undefined,
+ });
+ const generationCalls = () =>
+  readFileSync(calls, "utf8").trim().split("\n")
+   .map(line => JSON.parse(line))
+   .filter(({method}) => method === "generateContent" || method === "streamGenerateContent");
+ const flashBudgets = [[undefined, 8192], ["low", 4096], ["medium", 8192], ["high", 24576]] as const;
+ for (const [effort, budget] of flashBudgets) {
+  const extra = {generationConfig: {thinkingConfig: {thinkingBudget: 1024, includeThoughts: false}}};
+  const response = await host.call("fetch", effortRequest("gemini-3.7-flash", effort, undefined, extra));
+  assert.equal(response.events[0].status, 200);
+  const trace = generationCalls().at(-1);
+  assert.equal(trace.model, "gemini-3.7-flash-tiered");
+  assert.deepEqual(trace.request.generationConfig.thinkingConfig, {thinkingBudget: budget, includeThoughts: false});
+ }
+ for (const [effort, level] of [[undefined, "low"], ["xhigh", "xhigh"]] as const) {
+  const operation = effort ? "streamGenerateContent" : "generateContent";
+  const response = await host.call("fetch", effortRequest("gemini-4-neon", effort, "antigravity#N", {}, operation));
+  assert.equal(response.events[0].status, 200);
+  assert.equal(response.events[0].headers["x-magpie-sent-model"], `gemini-4-neon-${level}`);
+  const trace = generationCalls().at(-1);
+  assert.equal(trace.method, operation);
+  assert.equal(trace.model, `gemini-4-neon-${level}`);
+  assert.equal(trace.request.generationConfig.thinkingConfig.thinkingLevel, level.toUpperCase());
+ }
+ const directNeon = await host.call("fetch", effortRequest("gemini-4-neon", undefined, "antigravity#N", {
+  generation_config: {thinking_config: {thinking_level: "XHIGH", include_thoughts: true}},
+ }));
+ assert.equal(directNeon.events[0].status, 200);
+ const directTrace = generationCalls().at(-1);
+ assert.equal(directTrace.model, "gemini-4-neon-xhigh");
+ assert.deepEqual(directTrace.request.generationConfig.thinkingConfig, {thinkingLevel: "XHIGH", includeThoughts: true});
+ assert.equal(directTrace.request.generation_config?.thinking_config, undefined);
+ const groupedClaude = await host.call("fetch", effortRequest("claude-opus-5-5", "low", "antigravity#N", {
+  generationConfig: {temperature: 0.5, thinkingConfig: {thinkingBudget: 1024}},
+ }));
+ assert.equal(groupedClaude.events[0].status, 200);
+ assert.equal(groupedClaude.events[0].headers["x-magpie-sent-model"], "claude-opus-5-5-low");
+ const claudeTrace = generationCalls().at(-1);
+ assert.equal(claudeTrace.model, "claude-opus-5-5-low");
+ assert.deepEqual(claudeTrace.request.generationConfig, {temperature: 0.5});
+ const pinnedNeon = await host.call("fetch", effortRequest("gemini-4-neon-low", "xhigh", "antigravity#N"));
+ assert.equal(pinnedNeon.events[0].status, 200);
+ assert.equal(generationCalls().at(-1).model, "gemini-4-neon-low");
+ const beforeUnavailable = generationCalls().length;
+ const unavailable = await host.call("fetch", effortRequest("gemini-4-neon", "high", "antigravity#N"));
+ assert.equal(unavailable.events[0].status, 400);
+ const refusal = JSON.parse(textOf(unavailable)).error;
+ assert.equal(refusal.param, "reasoning_effort");
+ assert.match(refusal.message, /Reasoning effort .* not available.*Supported values are: 'low', 'xhigh'/i);
+ assert.equal(generationCalls().length, beforeUnavailable);
+ console.log("PASS native effort routing, including distinct backing models and partial account support");
  const good=await host.call("fetch",fetchRequest("fixture-tool",{tools:[{functionDeclarations:[{name:"fixture.long tool/name",parameters:{type:"object",properties:{value:{type:"integer"}}}}]}]}));
  assert.equal(good.events[0].status,200);assert.match(textOf(good),/fixture.long tool\/name/);assert(!textOf(good).includes('"response":'));
  const nonstream=await host.call("fetch",{...fetchRequest("fixture"),url:"https://antigravity.invalid/v1beta/models/gemini-3.7-flash-low:generateContent"});assert.equal(JSON.parse(textOf(nonstream)).candidates[0].content.parts[0].text,"fixture");
@@ -91,7 +149,7 @@ try {
  const hanging=await host.call("fetch",fetchRequest("fixture-hang"),true);assert(hanging.aborted);
  await new Promise(resolve=>setTimeout(resolve,100));
  const requests=readFileSync(calls,"utf8").trim().split("\n").map(x=>JSON.parse(x));assert(requests.some(x=>x.method==="fixture-aborted"));
- assert.equal(requests.filter(x=>x.method==="streamGenerateContent").length,9,"nine distinct SSE scenarios must each dispatch exactly once (no replay)");
+ assert.equal(requests.filter(x=>x.method==="streamGenerateContent").length,10,"ten distinct SSE scenarios must each dispatch exactly once (no replay)");
  console.log("PASS real Magpie Gemini transport: stream/nonstream, tool restoration, account rejection, structured errors without replay and abort");
  const r=await host.call("check",{provider:"antigravity",account:"antigravity#R"});assert(r.models.length>0);assert.equal(JSON.parse(readFileSync(authPath,"utf8"))["antigravity#R"].subject,"subject:R");
  assert.match(JSON.parse(readFileSync(authPath,"utf8"))["antigravity#R"].refresh,/rotated/);
@@ -107,5 +165,19 @@ try {
  const simultaneous=await Promise.all([host.call("usage",{provider:"antigravity"}),host.call("usage",{provider:"antigravity",account:"antigravity#B"})]);assert.equal(simultaneous[0].windows[0].used,0);assert.equal(simultaneous[1].windows[0].used,100);
  const removalRace=host.call("usage",{provider:"antigravity",account:"antigravity#D"});await new Promise(r=>setTimeout(r,50));await host.call("take",{provider:"antigravity",accounts:["antigravity#D"]});await removalRace;assert(!JSON.parse(readFileSync(authPath,"utf8"))["antigravity#D"]);
  console.log("PASS concurrent native usage isolation and deletion fence: in-flight synchronization cannot resurrect account");
- console.log("PASS 10 real-host/Pi-loader integration groups (offline, synthetic auth)");
+
+ const [provider] = await host.call("providers", {});
+ const flashModels = provider.models.filter(({id}) => id.startsWith("gemini-3.7-flash"));
+ assert.deepEqual(flashModels.map(({id, variants}) => ({id, variants})), [
+  {id: "gemini-3.7-flash", variants: ["low", "medium", "high"]},
+ ]);
+ assert.equal(flashModels[0].reasoning, true);
+ const neonModels = provider.models.filter(({id}) => id.startsWith("gemini-4-neon"));
+ assert.deepEqual(neonModels.map(({id, name, variants}) => ({id, name, variants})), [
+  {id: "gemini-4-neon", name: "Gemini 4 Neon", variants: ["low", "xhigh"]},
+ ]);
+ const neonAccount = provider.accounts.find(({key}) => key === "antigravity#N");
+ assert.deepEqual(new Set(neonAccount?.models), new Set(["gemini-4-neon", "claude-opus-5-5"]));
+ console.log("PASS native effort catalog advertises each model once with the account's observed variants");
+ console.log("PASS 12 real-host/Pi-loader integration groups (offline, synthetic auth)");
 }finally{await host.close();}
