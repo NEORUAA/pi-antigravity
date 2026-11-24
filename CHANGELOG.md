@@ -1,3 +1,12 @@
+## 0.16.2 (local candidate, not published)
+
+- Match Argon quota coverage to c2a's snapshot-aware Gemini fallback; keep real
+  independent Argon groups and unknown/missing-family detail without duplicate pools.
+- Label known public thinking tiers independently of their shared backing name;
+  retain c2a request mapping and explicit native thinking overrides.
+- Add independent original-Go coverage/protocol oracles and actual Magpie host/UI
+  refresh, persistence, label and native outbound-capture regressions.
+
 # Changelog
 
 All notable changes to this project are documented in this file.

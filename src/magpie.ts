@@ -10,7 +10,7 @@ import {
 import { loginAntigravity, refreshAntigravityToken, getApiKey } from "./auth/oauth.js";
 import { observeAccount } from "./auth/account-view.js";
 import { accountModelIds, accountSupportsModel } from "./compat/account-catalog.js";
-import { CODEX_CATALOG, resolveCodexModel } from "./compat/catalog.js";
+import { CODEX_CATALOG, resolveCodexModel, codexModelDisplayName } from "./compat/catalog.js";
 import { codexRequestId } from "./compat/profile.js";
 import {
   normalizeNativeGeminiRequest,
@@ -32,7 +32,12 @@ import {
   observeConsumerFailure,
   readConsumerJson,
 } from "./client/codex-transport.js";
-import { quotaGate } from "./auth/quota-snapshot.js";
+import {
+  quotaGate,
+  bucketFamily,
+  modelQuotaFamily,
+  normalizeWindow,
+} from "./auth/quota-snapshot.js";
 import { safeError } from "./utils/security.js";
 import { isCreditsEnabled } from "./utils/credits.js";
 import { isRecord } from "./utils/util.js";
@@ -156,13 +161,15 @@ function usageView(c: AntigravityOAuthCredentials) {
   const pools = new Map<string, string>();
   for (const group of q.groupsObserved ? q.groups : []) {
     const pool = group.displayName;
-    const scope = /argon/i.test(pool)
-      ? ids.filter((id) => /argon/i.test(id))
-      : /gemini/i.test(pool)
-        ? ids.filter((id) => /^gemini/i.test(id) && !/argon/i.test(id))
-        : /claude|gpt/i.test(pool)
-          ? ids.filter((id) => /^(claude|gpt)/i.test(id))
-          : [];
+    const families = new Set(
+      group.buckets
+        .filter((b) => normalizeWindow(b.window))
+        .map((b) => bucketFamily(b.bucketId))
+        .filter(Boolean),
+    );
+    const scope = ids.filter((id) =>
+      families.has(modelQuotaFamily(q, resolveCodexModel(id)?.wire ?? id)),
+    );
     if (group.buckets.length) for (const id of scope) pools.set(id, pool);
     for (const bucket of group.buckets) {
       const known =
@@ -192,7 +199,7 @@ function usageView(c: AntigravityOAuthCredentials) {
   // backing without a summary is its own model pool, NEVER an invented 5h/week.
   const backing = new Map<string, string[]>();
   for (const id of ids) {
-    const wire = CODEX_CATALOG.find((d) => d.id === id)?.wire ?? id;
+    const wire = resolveCodexModel(id)?.wire ?? id;
     backing.set(wire, [...(backing.get(wire) ?? []), id]);
   }
   for (const [wire, models] of backing) {
@@ -253,7 +260,7 @@ function modelView(c: AntigravityOAuthCredentials) {
         id,
         {
           id,
-          name: metadata?.displayName || id,
+          name: codexModelDisplayName(id, metadata?.displayName),
           providerID: ID,
           api: { id, url: "https://antigravity.invalid/v1beta", npm: "@ai-sdk/google" },
           status: "active",

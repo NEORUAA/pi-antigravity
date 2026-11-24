@@ -154,6 +154,30 @@ export function bucketFamily(id: string): string {
         ? "gemini"
         : "";
 }
+/** Same family fallback as c2a auth/antigravity_quota_family.go:77–109.
+ * Shared by enforcement and presentation; labels and percentages are not scope evidence.
+ */
+export function modelQuotaFamily(snapshot: QuotaSnapshot | undefined, model: string): string {
+  const modelId = model
+    .trim()
+    .toLowerCase()
+    .replace(/^models\//, "");
+  let family = modelId.includes("argon")
+    ? "argon"
+    : modelId.startsWith("gemini")
+      ? "gemini"
+      : /^(claude|gpt)/.test(modelId)
+        ? "3p"
+        : "";
+  if (
+    family === "argon" &&
+    !snapshot?.groups
+      .flatMap((g) => g.buckets)
+      .some((b) => normalizeWindow(b.window) && bucketFamily(b.bucketId) === "argon")
+  )
+    family = "gemini";
+  return family;
+}
 export function quotaGate(
   snapshot: QuotaSnapshot | undefined,
   model: string,
@@ -176,18 +200,7 @@ export function quotaGate(
     .trim()
     .toLowerCase()
     .replace(/^models\//, "");
-  let family = modelId.includes("argon")
-    ? "argon"
-    : modelId.startsWith("gemini")
-      ? "gemini"
-      : /^(claude|gpt)/.test(modelId)
-        ? "3p"
-        : "";
-  if (
-    family === "argon" &&
-    !buckets.some((b) => normalizeWindow(b.window) && bucketFamily(b.bucketId) === "argon")
-  )
-    family = "gemini";
+  const family = modelQuotaFamily(snapshot, modelId);
   const evaluate = (include: (family: string) => boolean) => {
     let resetAt: number | undefined, reason: string | undefined;
     for (const bucket of buckets) {

@@ -30,6 +30,7 @@ const checkpoint = ["codex-durable-checkpoint", process.execPath, ["scripts/run-
 const accountCatalog = ["account-model-go-differential", process.execPath, ["scripts/run-ts.mjs", "scripts/test-account-catalog.ts"]];
 const magpie = ["magpie-real-host-contract", process.execPath, ["scripts/run-ts.mjs", "scripts/test-magpie-host.ts"]];
 const nativeChecks=[
+ ["native-argon-source-host-projection",process.execPath,["scripts/run-ts.mjs","scripts/test-argon-projection.ts"]],
  ["native-independent-body-cancel","bun",["scripts/test-native-cancel.ts"],{NODE_OPTIONS:""}],
  ["native-original-go-differential",process.execPath,["scripts/run-ts.mjs","scripts/test-native-oracle.ts"]],
  ["native-canonical-health-generation",process.execPath,["scripts/run-ts.mjs","scripts/test-native-health-journal.ts"]],

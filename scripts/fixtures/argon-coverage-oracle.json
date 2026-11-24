@@ -1,0 +1,748 @@
+{
+  "commit": "d8e1981f1cc13d0b00fb4d4354e9c8777392319e",
+  "sha256": {
+    "antigravity_types.go": "f427476b21f01359cc718a619c6a18353c15c5889fd769deb80d4c48c74488fc",
+    "antigravity_client.go": "98e538d65a12fe8e0508a202e8b6259df9993ed8bc18f400ab382be54efd03a8",
+    "antigravity_quota_family.go": "d762d042bc2e99b5fbaafe214a6e9247aba64e0d8c5a09358139e9e1632b7da0"
+  },
+  "vectors": [
+    {
+      "input": {
+        "snapshot": {
+          "quota_groups": [
+            {
+              "display_name": "Unrelated translated label",
+              "buckets": [
+                {
+                  "bucket_id": "gemini-5h",
+                  "window": "5h"
+                },
+                {
+                  "bucket_id": "3p-weekly",
+                  "window": "weekly"
+                }
+              ]
+            }
+          ]
+        },
+        "model": "gemini-4-argon-low"
+      },
+      "expected": [
+        true,
+        false
+      ]
+    },
+    {
+      "input": {
+        "snapshot": {
+          "quota_groups": [
+            {
+              "display_name": "Unrelated translated label",
+              "buckets": [
+                {
+                  "bucket_id": "gemini-5h",
+                  "window": "5h"
+                },
+                {
+                  "bucket_id": "3p-weekly",
+                  "window": "weekly"
+                }
+              ]
+            }
+          ]
+        },
+        "model": "models/GEMINI-4-ARGON-HIGH"
+      },
+      "expected": [
+        true,
+        false
+      ]
+    },
+    {
+      "input": {
+        "snapshot": {
+          "quota_groups": [
+            {
+              "display_name": "Unrelated translated label",
+              "buckets": [
+                {
+                  "bucket_id": "gemini-5h",
+                  "window": "5h"
+                },
+                {
+                  "bucket_id": "3p-weekly",
+                  "window": "weekly"
+                }
+              ]
+            }
+          ]
+        },
+        "model": "gemini-3.7-flash-low"
+      },
+      "expected": [
+        true,
+        false
+      ]
+    },
+    {
+      "input": {
+        "snapshot": {
+          "quota_groups": [
+            {
+              "display_name": "Unrelated translated label",
+              "buckets": [
+                {
+                  "bucket_id": "gemini-5h",
+                  "window": "5h"
+                },
+                {
+                  "bucket_id": "3p-weekly",
+                  "window": "weekly"
+                }
+              ]
+            }
+          ]
+        },
+        "model": "claude-sonnet-4-6"
+      },
+      "expected": [
+        false,
+        true
+      ]
+    },
+    {
+      "input": {
+        "snapshot": {
+          "quota_groups": [
+            {
+              "display_name": "Unrelated translated label",
+              "buckets": [
+                {
+                  "bucket_id": "gemini-5h",
+                  "window": "5h"
+                },
+                {
+                  "bucket_id": "3p-weekly",
+                  "window": "weekly"
+                }
+              ]
+            }
+          ]
+        },
+        "model": "gpt-oss-120b-medium"
+      },
+      "expected": [
+        false,
+        true
+      ]
+    },
+    {
+      "input": {
+        "snapshot": {
+          "quota_groups": [
+            {
+              "display_name": "Unrelated translated label",
+              "buckets": [
+                {
+                  "bucket_id": "gemini-5h",
+                  "window": "5h"
+                },
+                {
+                  "bucket_id": "3p-weekly",
+                  "window": "weekly"
+                }
+              ]
+            }
+          ]
+        },
+        "model": "unknown"
+      },
+      "expected": [
+        false,
+        false
+      ]
+    },
+    {
+      "input": {
+        "snapshot": {
+          "quota_groups": [
+            {
+              "display_name": "Unrelated translated label",
+              "buckets": [
+                {
+                  "bucket_id": "gemini-5h",
+                  "window": "5h"
+                },
+                {
+                  "bucket_id": "gemini-argon-weekly",
+                  "window": "weekly"
+                },
+                {
+                  "bucket_id": "3p-5h",
+                  "window": "5h"
+                }
+              ]
+            }
+          ]
+        },
+        "model": "gemini-4-argon-low"
+      },
+      "expected": [
+        false,
+        true,
+        false
+      ]
+    },
+    {
+      "input": {
+        "snapshot": {
+          "quota_groups": [
+            {
+              "display_name": "Unrelated translated label",
+              "buckets": [
+                {
+                  "bucket_id": "gemini-5h",
+                  "window": "5h"
+                },
+                {
+                  "bucket_id": "gemini-argon-weekly",
+                  "window": "weekly"
+                },
+                {
+                  "bucket_id": "3p-5h",
+                  "window": "5h"
+                }
+              ]
+            }
+          ]
+        },
+        "model": "models/GEMINI-4-ARGON-HIGH"
+      },
+      "expected": [
+        false,
+        true,
+        false
+      ]
+    },
+    {
+      "input": {
+        "snapshot": {
+          "quota_groups": [
+            {
+              "display_name": "Unrelated translated label",
+              "buckets": [
+                {
+                  "bucket_id": "gemini-5h",
+                  "window": "5h"
+                },
+                {
+                  "bucket_id": "gemini-argon-weekly",
+                  "window": "weekly"
+                },
+                {
+                  "bucket_id": "3p-5h",
+                  "window": "5h"
+                }
+              ]
+            }
+          ]
+        },
+        "model": "gemini-3.7-flash-low"
+      },
+      "expected": [
+        true,
+        false,
+        false
+      ]
+    },
+    {
+      "input": {
+        "snapshot": {
+          "quota_groups": [
+            {
+              "display_name": "Unrelated translated label",
+              "buckets": [
+                {
+                  "bucket_id": "gemini-5h",
+                  "window": "5h"
+                },
+                {
+                  "bucket_id": "gemini-argon-weekly",
+                  "window": "weekly"
+                },
+                {
+                  "bucket_id": "3p-5h",
+                  "window": "5h"
+                }
+              ]
+            }
+          ]
+        },
+        "model": "claude-sonnet-4-6"
+      },
+      "expected": [
+        false,
+        false,
+        true
+      ]
+    },
+    {
+      "input": {
+        "snapshot": {
+          "quota_groups": [
+            {
+              "display_name": "Unrelated translated label",
+              "buckets": [
+                {
+                  "bucket_id": "gemini-5h",
+                  "window": "5h"
+                },
+                {
+                  "bucket_id": "gemini-argon-weekly",
+                  "window": "weekly"
+                },
+                {
+                  "bucket_id": "3p-5h",
+                  "window": "5h"
+                }
+              ]
+            }
+          ]
+        },
+        "model": "gpt-oss-120b-medium"
+      },
+      "expected": [
+        false,
+        false,
+        true
+      ]
+    },
+    {
+      "input": {
+        "snapshot": {
+          "quota_groups": [
+            {
+              "display_name": "Unrelated translated label",
+              "buckets": [
+                {
+                  "bucket_id": "gemini-5h",
+                  "window": "5h"
+                },
+                {
+                  "bucket_id": "gemini-argon-weekly",
+                  "window": "weekly"
+                },
+                {
+                  "bucket_id": "3p-5h",
+                  "window": "5h"
+                }
+              ]
+            }
+          ]
+        },
+        "model": "unknown"
+      },
+      "expected": [
+        false,
+        false,
+        false
+      ]
+    },
+    {
+      "input": {
+        "snapshot": {
+          "quota_groups": [
+            {
+              "display_name": "Unrelated translated label",
+              "buckets": [
+                {
+                  "bucket_id": "gemini-5h",
+                  "window": "5h"
+                },
+                {
+                  "bucket_id": "gemini-argon-daily",
+                  "window": "daily"
+                }
+              ]
+            }
+          ]
+        },
+        "model": "gemini-4-argon-low"
+      },
+      "expected": [
+        true,
+        false
+      ]
+    },
+    {
+      "input": {
+        "snapshot": {
+          "quota_groups": [
+            {
+              "display_name": "Unrelated translated label",
+              "buckets": [
+                {
+                  "bucket_id": "gemini-5h",
+                  "window": "5h"
+                },
+                {
+                  "bucket_id": "gemini-argon-daily",
+                  "window": "daily"
+                }
+              ]
+            }
+          ]
+        },
+        "model": "models/GEMINI-4-ARGON-HIGH"
+      },
+      "expected": [
+        true,
+        false
+      ]
+    },
+    {
+      "input": {
+        "snapshot": {
+          "quota_groups": [
+            {
+              "display_name": "Unrelated translated label",
+              "buckets": [
+                {
+                  "bucket_id": "gemini-5h",
+                  "window": "5h"
+                },
+                {
+                  "bucket_id": "gemini-argon-daily",
+                  "window": "daily"
+                }
+              ]
+            }
+          ]
+        },
+        "model": "gemini-3.7-flash-low"
+      },
+      "expected": [
+        true,
+        false
+      ]
+    },
+    {
+      "input": {
+        "snapshot": {
+          "quota_groups": [
+            {
+              "display_name": "Unrelated translated label",
+              "buckets": [
+                {
+                  "bucket_id": "gemini-5h",
+                  "window": "5h"
+                },
+                {
+                  "bucket_id": "gemini-argon-daily",
+                  "window": "daily"
+                }
+              ]
+            }
+          ]
+        },
+        "model": "claude-sonnet-4-6"
+      },
+      "expected": [
+        false,
+        false
+      ]
+    },
+    {
+      "input": {
+        "snapshot": {
+          "quota_groups": [
+            {
+              "display_name": "Unrelated translated label",
+              "buckets": [
+                {
+                  "bucket_id": "gemini-5h",
+                  "window": "5h"
+                },
+                {
+                  "bucket_id": "gemini-argon-daily",
+                  "window": "daily"
+                }
+              ]
+            }
+          ]
+        },
+        "model": "gpt-oss-120b-medium"
+      },
+      "expected": [
+        false,
+        false
+      ]
+    },
+    {
+      "input": {
+        "snapshot": {
+          "quota_groups": [
+            {
+              "display_name": "Unrelated translated label",
+              "buckets": [
+                {
+                  "bucket_id": "gemini-5h",
+                  "window": "5h"
+                },
+                {
+                  "bucket_id": "gemini-argon-daily",
+                  "window": "daily"
+                }
+              ]
+            }
+          ]
+        },
+        "model": "unknown"
+      },
+      "expected": [
+        false,
+        false
+      ]
+    },
+    {
+      "input": {
+        "snapshot": {
+          "quota_groups": [
+            {
+              "display_name": "Unrelated translated label",
+              "buckets": [
+                {
+                  "bucket_id": "3p-5h",
+                  "window": "5h"
+                },
+                {
+                  "bucket_id": "unknown",
+                  "window": "weekly"
+                }
+              ]
+            }
+          ]
+        },
+        "model": "gemini-4-argon-low"
+      },
+      "expected": [
+        false,
+        false
+      ]
+    },
+    {
+      "input": {
+        "snapshot": {
+          "quota_groups": [
+            {
+              "display_name": "Unrelated translated label",
+              "buckets": [
+                {
+                  "bucket_id": "3p-5h",
+                  "window": "5h"
+                },
+                {
+                  "bucket_id": "unknown",
+                  "window": "weekly"
+                }
+              ]
+            }
+          ]
+        },
+        "model": "models/GEMINI-4-ARGON-HIGH"
+      },
+      "expected": [
+        false,
+        false
+      ]
+    },
+    {
+      "input": {
+        "snapshot": {
+          "quota_groups": [
+            {
+              "display_name": "Unrelated translated label",
+              "buckets": [
+                {
+                  "bucket_id": "3p-5h",
+                  "window": "5h"
+                },
+                {
+                  "bucket_id": "unknown",
+                  "window": "weekly"
+                }
+              ]
+            }
+          ]
+        },
+        "model": "gemini-3.7-flash-low"
+      },
+      "expected": [
+        false,
+        false
+      ]
+    },
+    {
+      "input": {
+        "snapshot": {
+          "quota_groups": [
+            {
+              "display_name": "Unrelated translated label",
+              "buckets": [
+                {
+                  "bucket_id": "3p-5h",
+                  "window": "5h"
+                },
+                {
+                  "bucket_id": "unknown",
+                  "window": "weekly"
+                }
+              ]
+            }
+          ]
+        },
+        "model": "claude-sonnet-4-6"
+      },
+      "expected": [
+        true,
+        false
+      ]
+    },
+    {
+      "input": {
+        "snapshot": {
+          "quota_groups": [
+            {
+              "display_name": "Unrelated translated label",
+              "buckets": [
+                {
+                  "bucket_id": "3p-5h",
+                  "window": "5h"
+                },
+                {
+                  "bucket_id": "unknown",
+                  "window": "weekly"
+                }
+              ]
+            }
+          ]
+        },
+        "model": "gpt-oss-120b-medium"
+      },
+      "expected": [
+        true,
+        false
+      ]
+    },
+    {
+      "input": {
+        "snapshot": {
+          "quota_groups": [
+            {
+              "display_name": "Unrelated translated label",
+              "buckets": [
+                {
+                  "bucket_id": "3p-5h",
+                  "window": "5h"
+                },
+                {
+                  "bucket_id": "unknown",
+                  "window": "weekly"
+                }
+              ]
+            }
+          ]
+        },
+        "model": "unknown"
+      },
+      "expected": [
+        false,
+        false
+      ]
+    },
+    {
+      "input": {
+        "snapshot": {
+          "quota_groups": [
+            {
+              "display_name": "Unrelated translated label",
+              "buckets": []
+            }
+          ]
+        },
+        "model": "gemini-4-argon-low"
+      },
+      "expected": []
+    },
+    {
+      "input": {
+        "snapshot": {
+          "quota_groups": [
+            {
+              "display_name": "Unrelated translated label",
+              "buckets": []
+            }
+          ]
+        },
+        "model": "models/GEMINI-4-ARGON-HIGH"
+      },
+      "expected": []
+    },
+    {
+      "input": {
+        "snapshot": {
+          "quota_groups": [
+            {
+              "display_name": "Unrelated translated label",
+              "buckets": []
+            }
+          ]
+        },
+        "model": "gemini-3.7-flash-low"
+      },
+      "expected": []
+    },
+    {
+      "input": {
+        "snapshot": {
+          "quota_groups": [
+            {
+              "display_name": "Unrelated translated label",
+              "buckets": []
+            }
+          ]
+        },
+        "model": "claude-sonnet-4-6"
+      },
+      "expected": []
+    },
+    {
+      "input": {
+        "snapshot": {
+          "quota_groups": [
+            {
+              "display_name": "Unrelated translated label",
+              "buckets": []
+            }
+          ]
+        },
+        "model": "gpt-oss-120b-medium"
+      },
+      "expected": []
+    },
+    {
+      "input": {
+        "snapshot": {
+          "quota_groups": [
+            {
+              "display_name": "Unrelated translated label",
+              "buckets": []
+            }
+          ]
+        },
+        "model": "unknown"
+      },
+      "expected": []
+    }
+  ]
+}

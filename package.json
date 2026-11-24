@@ -1,6 +1,6 @@
 {
   "name": "pi-antigravity",
-  "version": "0.16.1",
+  "version": "0.16.2",
   "description": "Antigravity consumer provider for Magpie and Pi, with account-scoped quota and models",
   "author": "Rahul Arya",
   "license": "MIT",

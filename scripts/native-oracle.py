@@ -76,7 +76,7 @@ for declKey in ["functionDeclarations","function_declarations"]:
  for paramsKey in ["parameters","parametersJsonSchema","parameters_json_schema"]:
   requests.append({**base,"tools":[{declKey:[{"name":n,paramsKey:{"type":"object","properties":{"description":{"type":"string"},"x":{"type":"string","description":"OpenCode enum"}},"required":["x","gone"]},"description":"OpenCode tool"}for n in ["tool/name","tool_name","tool/name","","1😀"]]},{"googleSearch":{}}],"toolConfig":{"functionCallingConfig":{"allowedFunctionNames":["tool/name","tool_name"]}},"tool_config":{"function_calling_config":{"allowed_function_names":["tool/name","tool_name"]}}})
 requests += [{**base,"tools":[]},{"contents":[{"parts":[{"text":"a"}]},{"parts":[{"text":"b"}]},{"parts":[{"functionResponse":{"name":"x","response":["OpenCode",1]}}]}]}, {**base,"generationConfig":{"responseJsonSchema":{"type":"object","properties":{"type":{"type":"string","enum":["x","y"]}}}}}]
-for model in ["gemini-3.7-flash-high","gemini-4-neon-medium","gemini-3.1-pro-low","claude-sonnet-5-5-high","claude-sonnet-4-6","gpt-oss-120b-medium","gemini-3.7-flash"]:
+for model in ["gemini-3.7-flash-high","gemini-4-neon-medium","gemini-3.1-pro-low","claude-sonnet-5-5-high","claude-sonnet-4-6","gpt-oss-120b-medium","gemini-3.7-flash","gemini-4-argon-low","gemini-4-argon-medium","gemini-4-argon-high"]:
  for request in requests:inputs.append({"kind":"request","model":model,"request":request})
 responses=[{}, {"response":{"candidates":[{"content":{"parts":[{"text":"partial"}]}}],"cpaUsageMetadata":{"promptTokenCount":11,"candidatesTokenCount":7}}}, {"response":{"candidates":[{"finish_reason":"MAX_TOKENS","content":{"parts":[{"function_call":{"name":"tool_name","args":{"name":"tool_name"}}}]}}]}}, {"response":{"promptFeedback":{"blockReason":"SAFETY"}}}]
 for response in responses:inputs.append({"kind":"response","raw":json.dumps(response),"reverse":{"tool_name":"tool/name"}})
@@ -87,7 +87,7 @@ for raw in raws:
 for response in responses+[{"response":{"candidates":[{"finishReason":"STOP"}]}},{"response":{"promptFeedback":{"blockReason":"BLOCK_REASON_UNSPECIFIED"}}},{"error":{"code":429,"message":"fixture"}}]:
  for ending in ["","data: [DONE]\n\n"]:inputs.append({"kind":"stream","raw":"data: "+json.dumps(response)+"\n\n"+ending})
 
-for model in ["gemini-3.7-flash-high","claude-sonnet-4-6"]:
+for model in ["gemini-3.7-flash-high","claude-sonnet-4-6","gemini-4-argon-low","gemini-4-argon-medium","gemini-4-argon-high"]:
  for request in [base,{"contents":[{"role":"model","parts":[{"text":"leading assistant"}]}],"safetySettings":[],"toolConfig":{},"labels":{"fixture":"x"}}]:inputs.append({"kind":"count","model":model,"request":request})
 for terminal in ["NONE","finish_reason_unspecified","STOP","MAX_TOKENS","OTHER",""]:
  for key in ["finishReason","finish_reason"]:
