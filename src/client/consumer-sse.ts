@@ -1,15 +1,27 @@
+import { rememberRawJSON } from "../compat/json-raw.js";
 /** Pinned antigravity_stream_errors.go framing: SSE + bare/array errors and
  * unprefixed JSON continuation lines. Runtime remains Node, not Go transport. */
 import { isRecord } from "../utils/util.js";
 import { trimCodexWhitespace } from "../compat/scaffolding.js";
-async function* lines(response: Response, maxBytes: number): AsyncGenerator<string> {
+async function* lines(
+  response: Response,
+  maxBytes: number,
+  signal?: AbortSignal,
+): AsyncGenerator<string> {
   if (!response.body) throw new Error("No Antigravity response body");
   const reader = response.body.getReader(),
     decoder = new TextDecoder();
   let buffer = "";
+  const abort = () => {
+    void reader.cancel(signal?.reason).catch(() => {});
+  };
+  signal?.addEventListener("abort", abort, { once: true });
+  if (signal?.aborted) abort();
   try {
     for (;;) {
+      signal?.throwIfAborted();
       const chunk = await reader.read();
+      signal?.throwIfAborted();
       buffer += chunk.done ? decoder.decode() : decoder.decode(chunk.value, { stream: true });
       let offset = 0,
         newline: number;
@@ -18,17 +30,20 @@ async function* lines(response: Response, maxBytes: number): AsyncGenerator<stri
         offset = newline + 1;
         if (Buffer.byteLength(line) > maxBytes)
           throw new Error("Antigravity SSE line exceeds its size limit");
+        signal?.throwIfAborted();
         yield line;
       }
       buffer = buffer.slice(offset);
       if (Buffer.byteLength(buffer) > maxBytes)
         throw new Error("Antigravity SSE line exceeds its size limit");
       if (chunk.done) {
+        signal?.throwIfAborted();
         if (buffer) yield buffer;
         return;
       }
     }
   } finally {
+    signal?.removeEventListener("abort", abort);
     await reader.cancel().catch(() => {});
     reader.releaseLock();
   }
@@ -44,15 +59,16 @@ export function decodeConsumerEnvelope(raw: string): Record<string, unknown> {
     const error = (document as unknown[]).find(
       (item) => isRecord(item) && Object.hasOwn(item, "error"),
     );
-    if (isRecord(error)) return error;
+    if (isRecord(error)) return rememberRawJSON(error, raw);
     throw new Error("Antigravity stream array has no error object");
   }
   if (!isRecord(document)) throw new Error("Antigravity stream payload must be a JSON object");
-  return document;
+  return rememberRawJSON(document, raw);
 }
 export async function* consumerEvents(
   response: Response,
   maxBytes = 8 * 1024 * 1024,
+  signal?: AbortSignal,
 ): AsyncGenerator<Record<string, unknown>> {
   let parts: string[] = [],
     bytes = 0,
@@ -87,7 +103,8 @@ export async function* consumerEvents(
   };
   const topClosing = (line: string) =>
     !!line && line[0] !== " " && line[0] !== "\t" && /[}\]]$/.test(trimCodexWhitespace(line));
-  for await (const line of lines(response, maxBytes)) {
+  for await (const line of lines(response, maxBytes, signal)) {
+    signal?.throwIfAborted();
     const trimmed = trimCodexWhitespace(line);
     let payload: string | undefined;
     if (line.startsWith("data:")) {
@@ -124,6 +141,7 @@ export async function* consumerEvents(
       yield decodeConsumerEnvelope(payload);
     }
   }
+  signal?.throwIfAborted();
   if (parts.length) {
     const raw = flush();
     if (trimCodexWhitespace(raw) !== "[DONE]") yield decodeConsumerEnvelope(raw);

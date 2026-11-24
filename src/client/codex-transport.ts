@@ -1,3 +1,4 @@
+import { rememberRawJSON } from "../compat/json-raw.js";
 /** Consumer request dispatch adapted from codex2api d8e1981f's
  * proxy/antigravity_responses.go and antigravity_quota.go. */
 import type { AntigravityApiKey } from "../types/types.js";
@@ -181,7 +182,7 @@ export type GenerationDispatchOptions = {
   credentials: AntigravityApiKey;
   model: string;
   build: (projectId: string) => object | Promise<object>;
-  method?: "generateContent" | "streamGenerateContent";
+  method?: "generateContent" | "streamGenerateContent" | "countTokens";
   onAccount?: (credentials: AntigravityApiKey) => void;
   send: (url: string, init: RequestInit) => Promise<Response>;
   signal?: AbortSignal;
@@ -266,7 +267,7 @@ export async function executeCodexGeneration(
           let response: Response;
           try {
             response = await options.send(
-              `${endpoint}/v1internal:${options.method === "generateContent" ? "generateContent" : "streamGenerateContent?alt=sse"}`,
+              `${endpoint}/v1internal:${options.method === "countTokens" ? "countTokens" : options.method === "generateContent" ? "generateContent" : "streamGenerateContent?alt=sse"}`,
               {
                 method: "POST",
                 headers: {
@@ -433,5 +434,6 @@ export async function readConsumerJson(
     await reader.cancel().catch(() => {});
     reader.releaseLock();
   }
-  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+  const raw = Buffer.concat(chunks).toString("utf8");
+  return rememberRawJSON(JSON.parse(raw) as unknown, raw);
 }

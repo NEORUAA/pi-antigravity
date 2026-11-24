@@ -173,3 +173,92 @@ All Google calls in these tests are synthetic endpoint fixtures. Bun's fixture
 preload denies unrecognized hosts/RPCs; Node suites keep the offline guard and
 MockAgent. No personal auth store, real login/quota or user Magpie build was used.
 No account-risk reduction is verified. Prior platform/DB boundaries remain.
+
+## Independent native audit repair — local 0.16.1 candidate (2026-11-24 JST)
+
+**Not pushed, not in a PR, not merged. Awaiting independent review.** The older
+0.16.0 nine host groups above passed but omitted the audit's real concurrency,
+native-conversion and compact-UI counterexamples; they did not establish parity.
+
+Current bounded run: `node scripts/verify-offline.mjs` = **40/41 groups PASS**,
+exit 1 solely for the unchanged legacy `scenarioLongFence` (`test-web-fetch.ts:502`,
+`read-url-content.ts:120`, provenance character budget). Both files are unchanged
+from the base and Pi pin; no test/workflow/gate was weakened to hide it.
+
+- Typecheck, lint, security-check, full Prettier check: PASS.
+- Existing default 19 / Go schema-request 714 / quota gate 558 / account/admin
+  334 / application 24 / Sync 11 / durable pending/restart 18: retained PASS.
+- **212 new genuine original-Go native vectors PASS**: full request normalization,
+  native schema aliases, explicit thinking, roles/grouped parallel results/images,
+  signature aliases, function-name collision/choice paths, usage/nonstream finish,
+  terminal aliases/blocks/truncation, raw JSON-mode and countTokens envelopes.
+  Generator: `scripts/native-oracle.py`; exact source/dependency/adapters recorded
+  in `scripts/fixtures/native-oracle-provenance.json`. Normal tests need no Go/network.
+- Expanded **10 real-host/Pi-loader groups PASS**. Among them 22 original-Go
+  request goldens go through the unmodified Magpie native loader; real fetch checks
+  cover missing finishReason vs nonstream STOP, legitimate promptFeedback, usage,
+  countTokens, raw-order Claude schema conversion, separate OTHER finish, own-tool
+  passthrough and unsupported-schema HTTP 400. Nine distinct streamed scenarios
+  assert exactly nine upstream dispatches (no output/error replay).
+- Three new real unmodified-host race groups PASS: VALIDATION_REQUIRED and quota
+  arriving during refresh remain **403/429** after rotation, after a deliberately
+  later metadata overwrite, and after an actual process restart. Sign-out during
+  renewal leaves the account absent. Epoch-journal cases additionally verify
+  temporary pending rotation, throwing-update atomicity, fresh consent/revocation
+  fencing, per-account isolation, legacy-metadata adoption and corrupt health data.
+- Actual host→**unmodified same-pin compact UI functions** PASS: Gemini and
+  Claude/GPT four real windows visible, partial summary preserves other backing
+  allowances/Unknown, detail members retained, errors do not show full quota.
+  UI Git blob `902bb7b7fb11747a8a1df6bc06b03f45608a238e` verified read-only on GitHub;
+  extracted function bytes are hash-checked and retain Magpie's MIT license.
+- **71 directory/file durability fault cases PASS**: win32 directory-open/fsync
+  EPERM is isolated from POSIX EPERM and real EACCES/EIO/ENOSPC/EROFS/EBADF;
+  mandatory file flush and write/rename/chmod failures fail closed. An unsupported
+  directory flush retains a genuinely file-fsynced recoverable **pending**, not
+  usable, rotated tuple and emits a redacted capability warning. This is injected
+  cross-platform testing on Linux, not actual Windows/NTFS/Bun hardware validation.
+- `npm pack --dry-run --ignore-scripts`: 0.16.1, **82 files**, native root/server,
+  new runtime helpers and **four Pi wrappers**; no scripts/fixtures/stores/cache.
+  No archive/release/tag/npm publication was performed. The package remains private
+  to accidental npm publication, while its GitHub fork remains public.
+
+Short targeted reruns: `yarn test:native` (seven new groups), `yarn test:codex`
+(all consumer/native groups). Full default runner preserves all legacy failures.
+Runtime remains Node 24.22.1 / Bun 1.4.4 on Linux; no personal token/store or real
+Google request was used. The friend has since confirmed Windows (server Linux). The EPERM report is
+consistent with the former directory fsync path, but its exact stack/sole cause
+and completed Google login remain unproven.
+
+Remaining boundaries: single-writer local journal (no cross-process distributed
+CAS), host-owned account selection/keep-alive, no gateway UI/DB/Redis/external
+OpenAI/Anthropic server, no Go TLS/HTTP wire fingerprint equivalence, no real
+Google entitlement/risk or user's installed host/Windows build verification.
+No perfection or lower-ban-risk conclusion follows from these offline results.
+
+### Second-review follow-up — 2026-11-24 JST (local only)
+
+The independent 1520951 review did not approve publication: although prior
+counterexamples passed, its body.cancel-only fixture exposed a new P2. The same
+independent fixture failed locally before the follow-up and now passes without
+aborting its original caller signal. `test-native-cancel.ts` expands it to **17**
+cases, including watchdog on/off, cancel before/after downstream read, initial
+upstream silence with caller abort, network failures before/after output, empty
+EOF, legal finish and cancel-after-finish, original abort with unread output,
+concurrent request isolation, no replay, released upstream locks, removed caller
+listeners, no unhandled rejections, no quota/auth penalties and stale-loader
+rejection after host auth disappears. The initial first-frame/error peek still
+requires caller abort until a downstream Response exists; this is explicit.
+
+The actual unmodified-host deletion race now also holds an old refresh, signs out
+its specific key, confirms **no loader/no dispatch but journal retained**, performs
+fresh verified OAuth consent, then releases the old token response. The new
+family/epoch/credentials/health remain intact; no fabricated signOut callback or
+claim of native checkpoint revocation is made. Host routing to other existing
+accounts is distinct from reviving a deleted key.
+
+The full offline runner now has **42 groups** (41 PASS and the same untouched
+scenarioLongFence FAIL). The eight new native groups remain in the normal runner;
+Bun is mandatory for the original-repro test, not silently skipped. Existing Go
+212/714/558/334 vectors, Pi/default/legacy/host/UI/checkpoint suites are retained.
+See `.cache/review-cancel-full.log` / per-group logs for this local run. No real
+Google, user credentials, remote updates, release, npm publish or host edits.

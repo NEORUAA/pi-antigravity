@@ -1,6 +1,6 @@
 {
   "name": "pi-antigravity",
-  "version": "0.16.0",
+  "version": "0.16.1",
   "description": "Antigravity consumer provider for Magpie and Pi, with account-scoped quota and models",
   "author": "Rahul Arya",
   "license": "MIT",
@@ -52,7 +52,8 @@
     "audit": "yarn npm audit --environment production --recursive && yarn npm audit --severity high --all --recursive",
     "check": "yarn typecheck && yarn lint && yarn format:check && yarn security-check && yarn test && yarn audit",
     "test:legacy": "node scripts/run-ts.mjs scripts/test-sanitize-text.ts && node scripts/run-ts.mjs scripts/test-model-routing.ts && node scripts/run-ts.mjs scripts/test-model-discovery.ts && node scripts/run-ts.mjs scripts/test-usage-formatter.ts && node scripts/run-ts.mjs scripts/test-model-pricing.ts && node scripts/run-ts.mjs scripts/test-stream-sse.ts && node scripts/run-ts.mjs scripts/test-stream-header-deadline.ts && node scripts/run-ts.mjs scripts/test-http-proxy.ts && node scripts/run-ts.mjs scripts/test-oauth-fetch.ts && node scripts/run-ts.mjs scripts/test-image-gen.ts && node scripts/run-ts.mjs scripts/test-native-images.ts && node scripts/run-ts.mjs scripts/test-transcript-context.ts && node scripts/run-ts.mjs scripts/test-inline-system.ts && node scripts/run-ts.mjs scripts/test-accounts.ts && node scripts/run-ts.mjs scripts/test-search.ts && node scripts/run-ts.mjs scripts/test-search-citations.ts && node scripts/run-ts.mjs scripts/test-web-fetch.ts && node scripts/run-ts.mjs scripts/test-reader-foundations.ts && node scripts/run-ts.mjs scripts/test-extra-tools-toggle.ts && node scripts/run-ts.mjs scripts/test-fetch-tool-toggle.ts && node scripts/run-ts.mjs scripts/test-provider-registration.ts && node scripts/run-ts.mjs scripts/test-stream-recovery.ts && node scripts/run-ts.mjs scripts/test-capacity-retry.ts && node scripts/run-ts.mjs scripts/test-enterprise-and-capacity.ts",
-    "test:codex": "node scripts/verify-offline.mjs --codex-only"
+    "test:codex": "node scripts/verify-offline.mjs --codex-only",
+    "test:native": "node scripts/verify-offline.mjs --native-only"
   },
   "peerDependencies": {
     "typebox": "*"

@@ -1,5 +1,6 @@
 /** Single-writer durable OAuth credential-family checkpoint. All token material is
  * owner-only local data. No unverified ID-token decoding or upstream calls here. */
+import { syncCredentialDirectory } from "./directory-sync.js";
 import { createHash, randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
@@ -18,7 +19,14 @@ import {
 import type { AntigravityOAuthCredentials } from "../types/types.js";
 
 type State = "baseline" | "pending" | "verified" | "permanent" | "revoked";
+export type ConsumerHealth = {
+  blockedReason?: string;
+  cooldowns?: Record<string, number>;
+  lastFailure?: { at: number; status: number; kind: string; model: string };
+};
+export type ConsumerLease = { family: string; epoch: string };
 type RecordValue = {
+  consumerHealth?: ConsumerHealth;
   epoch: string;
   revision: number;
   state: State;
@@ -54,6 +62,35 @@ function path(): string {
     "antigravity-checkpoints.json",
   );
 }
+function validConsumerHealth(health: unknown): health is ConsumerHealth {
+  const plain = (v: unknown): v is Record<string, unknown> =>
+    !!v && typeof v === "object" && !Array.isArray(v);
+  if (
+    !plain(health) ||
+    (health.blockedReason !== undefined && typeof health.blockedReason !== "string") ||
+    (health.cooldowns !== undefined &&
+      (!plain(health.cooldowns) ||
+        Object.values(health.cooldowns).some(
+          (v) => typeof v !== "number" || !Number.isFinite(v) || v < 0,
+        )))
+  )
+    return false;
+  if (health.lastFailure !== undefined) {
+    const f = health.lastFailure;
+    if (
+      !plain(f) ||
+      typeof f.at !== "number" ||
+      !Number.isFinite(f.at) ||
+      typeof f.status !== "number" ||
+      !Number.isInteger(f.status) ||
+      typeof f.model !== "string" ||
+      typeof f.kind !== "string"
+    )
+      return false;
+  }
+  return true;
+}
+
 function load(): Journal {
   if (!existsSync(path()))
     return { version: 1, families: {}, refreshAliases: {}, accessAliases: {} };
@@ -93,6 +130,9 @@ function load(): Journal {
             !Number.isFinite(record.credentials.expires)))
       )
         throw new Error("record");
+    for (const record of Object.values(value.families))
+      if (record.consumerHealth !== undefined && !validConsumerHealth(record.consumerHealth))
+        throw new Error("health");
     return value;
   } catch {
     throw new CredentialCheckpointError("corrupt");
@@ -112,13 +152,9 @@ function save(journal: Journal): void {
     fd = undefined;
     renameSync(temp, target);
     chmodSync(target, 0o600);
-    // File fsync + directory fsync: the checkpoint rename survives a restart/crash.
-    const directory = openSync(dir, "r");
-    try {
-      fsyncSync(directory);
-    } finally {
-      closeSync(directory);
-    }
+    // File contents are always fsynced before rename. Unsupported directory
+    // fsync is explicitly reported; it does not relax file/rename permissions.
+    syncCredentialDirectory(dir);
   } finally {
     if (fd !== undefined) closeSync(fd);
     if (existsSync(temp)) unlinkSync(temp);
@@ -186,6 +222,7 @@ export function beginCredentialFlight(
     record.credentials = unvalidated(credentials);
     delete record.failure;
     delete record.previousIdentity;
+    record.consumerHealth = {};
     alias(journal, family, credentials);
   } else if (record.state === "revoked" || record.state === "permanent")
     throw new CredentialCheckpointError(record.state);
@@ -405,4 +442,64 @@ export function verifiedCredentialForToken(token: string): AntigravityOAuthCrede
 export function credentialFlightKey(credentials: AntigravityOAuthCredentials): string | undefined {
   const found = recordFor(load(), credentials);
   return found ? `${found[0]}:${found[1].epoch}` : undefined;
+}
+
+/** Authoritative native protection is part of the durable credential generation,
+ * NOT an eventually-overwritten projection in the host auth object. Synchronous
+ * read/check/merge/atomic-save has no await boundary in the single-writer journal. */
+export function consumerLease(credentials: AntigravityOAuthCredentials): ConsumerLease {
+  const found = recordFor(load(), credentials);
+  if (!found) throw new CredentialCheckpointError("pending");
+  const [family, record] = found;
+  if (record.state !== "verified")
+    throw new CredentialCheckpointError(record.state === "baseline" ? "pending" : record.state);
+  return { family, epoch: record.epoch };
+}
+export function consumerHealth(lease: ConsumerLease): ConsumerHealth {
+  const record = load().families[lease.family];
+  if (
+    !record ||
+    record.epoch !== lease.epoch ||
+    record.state === "revoked" ||
+    record.state === "permanent"
+  )
+    throw new CredentialCheckpointError("superseded");
+  return structuredClone(record.consumerHealth ?? {});
+}
+export function updateConsumerHealth(
+  lease: ConsumerLease,
+  update: (health: ConsumerHealth) => void,
+): boolean {
+  const journal = load(),
+    record = journal.families[lease.family];
+  if (
+    !record ||
+    record.epoch !== lease.epoch ||
+    record.state === "revoked" ||
+    record.state === "permanent"
+  )
+    return false;
+  const health = structuredClone(record.consumerHealth ?? {});
+  update(health);
+  record.consumerHealth = health;
+  save(journal);
+  return true;
+}
+
+/** One-time 0.16.0 upgrade adoption. A fresh consent explicitly initializes {},
+ * so stale host projections can neither reintroduce old blocks nor clear new ones. */
+export function initializeConsumerHealth(
+  credentials: AntigravityOAuthCredentials,
+  legacy: unknown,
+): void {
+  const lease = consumerLease(credentials),
+    journal = load(),
+    record = journal.families[lease.family];
+  if (record.epoch !== lease.epoch || record.state !== "verified")
+    throw new CredentialCheckpointError("superseded");
+  if (record.consumerHealth !== undefined) return;
+  const health = legacy ?? {};
+  if (!validConsumerHealth(health)) throw new CredentialCheckpointError("corrupt");
+  record.consumerHealth = structuredClone(health);
+  save(journal);
 }

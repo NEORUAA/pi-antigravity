@@ -49,7 +49,7 @@ try {
  assert.deepEqual(b.models,["claude-sonnet-4-6"]);assert.equal(b.usage.windows[0].used,100);
  console.log("PASS account isolation: separate model sets and zero-remaining quota");
  const u=await host.call("usage",{provider:"antigravity",account:"antigravity#U"});
- assert.equal(u.windows.length,1);assert.equal(u.windows[0].used,null);assert.equal(u.windows[0].display,"Unknown");
+ assert.equal(u.windows.length,2,"one exact backing pool plus its model detail; no inferred family window");assert.equal(u.windows.filter(w=>w.pool&&!w.family).length,1);assert.equal(u.windows.filter(w=>w.family).length,1);assert.equal(u.windows[0].used,null);assert.equal(u.windows[0].display,"Unknown");
  const e=await host.call("usage",{provider:"antigravity",account:"antigravity#E"});
  assert.equal(e.windows.length,0); // An observed credit balance is not a fabricated quota.
  const invalid=await host.call("usage",{provider:"antigravity",account:"antigravity#I"});assert(invalid.error);assert.equal(invalid.windows.length,0);
@@ -67,11 +67,23 @@ try {
  const good=await host.call("fetch",fetchRequest("fixture-tool",{tools:[{functionDeclarations:[{name:"fixture.long tool/name",parameters:{type:"object",properties:{value:{type:"integer"}}}}]}]}));
  assert.equal(good.events[0].status,200);assert.match(textOf(good),/fixture.long tool\/name/);assert(!textOf(good).includes('"response":'));
  const nonstream=await host.call("fetch",{...fetchRequest("fixture"),url:"https://antigravity.invalid/v1beta/models/gemini-3.7-flash-low:generateContent"});assert.equal(JSON.parse(textOf(nonstream)).candidates[0].content.parts[0].text,"fixture");
+
+ const sourceVectors=JSON.parse(readFileSync("scripts/fixtures/native-oracle.json","utf8")).filter(v=>v.input.kind==="request"&&v.input.model==="gemini-3.7-flash-high"&&v.input.request.contents);
+ for(const {input,expected}of sourceVectors){const r=await host.call("fetch",{...fetchRequest("unused"),model:input.model,url:`https://antigravity.invalid/v1beta/models/${input.model}:generateContent`,body:Buffer.from(JSON.stringify(input.request)).toString("base64")});assert.equal(r.events[0].status,200);const trace=readFileSync(calls,"utf8").trim().split("\n").map(x=>JSON.parse(x)).filter(x=>x.method==="generateContent").at(-1).request;delete trace.sessionId;assert.deepEqual(trace,expected.request,"actual host native request must match original Go oracle");const doc=JSON.parse(textOf(r));assert.equal(doc.usageMetadata.promptTokenCount,11);assert(!doc.cpaUsageMetadata);}
+ const partial=await host.call("fetch",fetchRequest("fixture-partial"));assert.equal(partial.events[0].status,200);assert.match(partial.error,/unexpected EOF/);const nonstreamPartial=await host.call("fetch",{...fetchRequest("fixture-partial"),url:"https://antigravity.invalid/v1beta/models/gemini-3.7-flash-low:generateContent"});assert.equal(JSON.parse(textOf(nonstreamPartial)).candidates[0].finishReason,"STOP");
+ const safety=await host.call("fetch",fetchRequest("fixture-prompt-safety"));assert(!safety.error);assert.match(textOf(safety),/SAFETY/);
+ const count=await host.call("fetch",{...fetchRequest("fixture-count"),url:"https://antigravity.invalid/v1beta/models/gemini-3.7-flash-low:countTokens"});assert.equal(JSON.parse(textOf(count)).totalTokens,23);
+ console.log(`PASS actual host ${sourceVectors.length} original-Go native conversions, missing terminal, legal block, usage and countTokens`);
+
+ const schemaRequest=(marker,tools=[])=>({...fetchRequest(marker),model:"claude-sonnet-4-6",url:"https://antigravity.invalid/v1beta/models/claude-sonnet-4-6:streamGenerateContent",body:Buffer.from(JSON.stringify({contents:[{role:"user",parts:[{text:marker}]}],generationConfig:{responseJsonSchema:{type:"object",properties:{value:{type:"integer"}}}},tools})).toString("base64")});
+ const structured=await host.call("fetch",schemaRequest("fixture-json-mode"));assert(!structured.error);const frames=textOf(structured).split("\n").filter(line=>line.startsWith("data: ")).map(line=>JSON.parse(line.slice(6)));assert.equal(frames[0].candidates[0].content.parts.at(-1).text,'{"10":1.00,"2":1e3}');assert(!frames[0].candidates[0].content.parts.some(p=>p.text==="not JSON"));assert.equal(frames[1].candidates[0].finishReason,"STOP");
+ const own=await host.call("fetch",schemaRequest("fixture-json-mode",[{functionDeclarations:[{name:"json_mode",parameters:{type:"object"}}]}]));assert.match(textOf(own),/functionCall/);assert.match(textOf(own),/"finishReason":"OTHER"/);
+ const refused=await host.call("fetch",schemaRequest("fixture-json-reject"));assert.equal(refused.events[0].status,400);assert.equal(JSON.parse(textOf(refused)).error.code,"antigravity_feature_unsupported");assert.match(textOf(refused),/json_schema structured output/);
  const denied=await host.call("fetch",{...fetchRequest("fixture"),account:"antigravity#B"});assert.equal(denied.events[0].status,404);
  const before=await host.call("fetch",{...fetchRequest("fixture-before-error"),account:"antigravity#X"});assert.equal(before.events[0].status,429);assert(!textOf(before).includes("data:"));
  const after=await host.call("fetch",{...fetchRequest("fixture-after-error"),account:"antigravity#Y"});assert.equal(after.events[0].status,200);assert.match(textOf(after),/fixture/);assert(after.error);
  const held=await host.call("fetch",{...fetchRequest("fixture"),account:"antigravity#X"});assert.equal(held.events[0].status,429,"HTTP200 quota failure persists in the host-owned account");
- const hostHealth=JSON.parse(readFileSync(authPath,"utf8"));assert.equal(hostHealth["antigravity#X"].consumerHealth.lastFailure.kind,"quota");assert.equal(hostHealth["antigravity#Y"].consumerHealth.lastFailure.status,429);
+ const hostHealth=JSON.parse(readFileSync(join(home,"pi/antigravity-checkpoints.json"),"utf8"));const protections=Object.values(hostHealth.families)as any[];assert(protections.filter(r=>r.consumerHealth?.lastFailure?.kind==="quota").length>=2);assert(protections.some(r=>r.consumerHealth?.lastFailure?.status===429));
  await host.call("usage",{provider:"antigravity",account:"antigravity#X"});
  await host.close();host=start();await host.init();
  const durable=await host.call("fetch",{...fetchRequest("fixture"),account:"antigravity#X"});assert.equal(durable.events[0].status,429,"usage refresh/restart must retain the failure fence");
@@ -79,7 +91,7 @@ try {
  const hanging=await host.call("fetch",fetchRequest("fixture-hang"),true);assert(hanging.aborted);
  await new Promise(resolve=>setTimeout(resolve,100));
  const requests=readFileSync(calls,"utf8").trim().split("\n").map(x=>JSON.parse(x));assert(requests.some(x=>x.method==="fixture-aborted"));
- assert.equal(requests.filter(x=>x.method==="streamGenerateContent").length,4,"SSE failures must not replay");
+ assert.equal(requests.filter(x=>x.method==="streamGenerateContent").length,9,"nine distinct SSE scenarios must each dispatch exactly once (no replay)");
  console.log("PASS real Magpie Gemini transport: stream/nonstream, tool restoration, account rejection, structured errors without replay and abort");
  const r=await host.call("check",{provider:"antigravity",account:"antigravity#R"});assert(r.models.length>0);assert.equal(JSON.parse(readFileSync(authPath,"utf8"))["antigravity#R"].subject,"subject:R");
  assert.match(JSON.parse(readFileSync(authPath,"utf8"))["antigravity#R"].refresh,/rotated/);
@@ -95,5 +107,5 @@ try {
  const simultaneous=await Promise.all([host.call("usage",{provider:"antigravity"}),host.call("usage",{provider:"antigravity",account:"antigravity#B"})]);assert.equal(simultaneous[0].windows[0].used,0);assert.equal(simultaneous[1].windows[0].used,100);
  const removalRace=host.call("usage",{provider:"antigravity",account:"antigravity#D"});await new Promise(r=>setTimeout(r,50));await host.call("take",{provider:"antigravity",accounts:["antigravity#D"]});await removalRace;assert(!JSON.parse(readFileSync(authPath,"utf8"))["antigravity#D"]);
  console.log("PASS concurrent native usage isolation and deletion fence: in-flight synchronization cannot resurrect account");
- console.log("PASS 9 real-host/Pi-loader integration groups (offline, synthetic auth)");
+ console.log("PASS 10 real-host/Pi-loader integration groups (offline, synthetic auth)");
 }finally{await host.close();}

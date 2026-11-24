@@ -112,12 +112,100 @@ The unchanged failure was independently reproduced at the pinned Pi baseline.
 - Account view reuses only a same-family **verified** fresh checkpoint; pending
   validation can recover through Sync, never through an unverified ID token or
   fabricated quota. Failed/deleted account writes remain fenced by the host.
-- Native generation persists classified HTTP/SSE health in the scoped host auth
-  metadata (not Pi's account store), including monotonic shared cooldowns and
-  restart recovery. It uses caller-owned account routing; it must not fail over to
+- Historical 0.16.0 attempted to persist classified HTTP/SSE health in scoped
+  host auth metadata; independent review proved its refresh race unsafe. The
+  0.16.1 correction below replaces that authority with the generation journal. It uses caller-owned account routing; it must not fail over to
   the separate Pi account registry. TLS/HTTP/platform and gateway DB boundaries
   remain as documented above.
 
 The earlier screenshot's 46 entries cannot be fully reproduced from the pinned
 loader: old plugin = 44 chat definitions + one image entry, old Pi bridge filters
 image entries. Additional entries/cache origins are not established from source.
+
+## Independent native audit repair — local 0.16.1 candidate
+
+The earlier nine host groups passed but **missed substantive native defects**.
+The independent audit reproduced refreshed-away VALIDATION_REQUIRED/cooldowns,
+partial SSE reported as successful EOF, explicit thinking overwrite, parallel
+response/image grouping, signature aliases, forced tool-choice renaming, missing
+usage restoration, and a compact quota-card pool-contract omission. Its original
+counterexamples were run before changes, then retained in regression tests. The
+user's usage-page/compact-card difference is a presentation contract defect; the
+partial-summary fallback is a separate offline finding, not asserted live data.
+
+| Original pinned c2a / host source                                                                  | Candidate implementation and independent evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `antigravity_gemini.go:140-260,372-538` native normalize/wrap, scaffolding and native schema rules | `compat/native-gemini.ts`; **212 original-Go vectors** cover full envelopes/normalization, not a TS self-oracle; 22 request vectors additionally traverse the real host. Pi intentionally retains its typed SDK/property-name schema adaptation.                                                                                                                                                                                                                                                                                                                                 |
+| `antigravity_gemini.go:263-363,539-825`; `antigravity_function_names.go:112-291`                   | Shared `compat/gemini-parts.ts` handles parallel results/images, roles and camel/snake/nested signature semantics; both paths rename forced-tool selectors. Native name extraction, duplicate declarations, schema aliases and response-name paths match source vectors.                                                                                                                                                                                                                                                                                                         |
+| `antigravity_gemini.go:827-1050` native unwrap/usage/finish/SSE                                    | `cpaUsageMetadata` restored; nonstream missing camel finishReason gets STOP; stream must have genuine finishReason/promptFeedback terminal. Empty/truncated/structured-error/cancel cannot turn into success or trigger internal replay.                                                                                                                                                                                                                                                                                                                                         |
+| `antigravity_gemini.go:65-137` countTokens                                                         | Same consumer dispatch; count-specific stripped envelope, non-Claude leading-user rule and bounded response unwrap; actual-host test plus original Go envelope vectors.                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `antigravity_json_mode.go:21-215` Claude schema mode                                               | Original raw args spelling/order retained by weak JSON metadata; json_mode text conversion, thought retention, other-text removal, stream-wide OTHER→STOP, declared-own-tool exemption, nested tool_choice rejection. Original-Go frame vectors plus actual-host integration. New Go/gjson tooling is development-only; no sidecar/runtime dependency.                                                                                                                                                                                                                           |
+| `auth/store.go:13157-13166,13268-13297`; Magpie `renewLocked:3247-3293`                            | Canonical generation-journal health survives same-epoch pending rotation and any host auth-object merge order. Synchronous read/check/merge/atomic rename contains no await; one-time 0.16.0 metadata adoption cannot clear canonical protection or re-poison a fresh epoch. Captured epoch cannot write after fresh consent/revocation; a health write does not clobber pending credentials or advance the rotation revision. Actual unmodified-host 403/429 races, late metadata save and real restart stay blocked; deletion during renewal does not revive the host account. |
+| Magpie `host.js:3348-3353,3411-3431`, `app.js:14451-15019`; c2a quota cells/detail/model-list      | Actual host→unmodified UI regression shows both real pools/four windows, partial-summary model allowances and Unknown, and model detail retention. No inferred family quota, 27-model target, or fabricated full quota.                                                                                                                                                                                                                                                                                                                                                          |
+| Checkpoint file→directory fsync path; Windows FlushFileBuffers access contract                     | `auth/directory-sync.ts`: mandatory file sync and atomic rename retained; narrowly recognized directory capability failure is warned, not confused with file/disk/permission failure. 71 cross-platform injected failure cases; no Windows hardware claim.                                                                                                                                                                                                                                                                                                                       |
+
+The genuine native Go oracle copies the pinned pure source kernels, with original
+`gjson` v1.18.0 (original go.sum checksums). Explicit deterministic adapters are
+listed in `scripts/fixtures/native-oracle-provenance.json`: request/session IDs,
+expose-thoughts=true, and no gateway administrator redirects. Session hash/ID
+behavior retains prior independent vectors. Normal tests use committed goldens;
+regeneration requires the isolated dev dependency cache and pinned source checkout.
+
+### Bounded review / remaining non-equivalence
+
+- OAuth/PKCE/state/code exchange, durable pending rotation/restart/identity checks,
+  load/onboard/tier/catalog/quota, UA/headers/session/body reuse, consumer retry and
+  endpoint rules retain their earlier protocol/state-machine evidence. New repairs
+  add native counterparts rather than replacing these with only Pi tests.
+- The journal is a **single-writer process** checkpoint, not cross-process CAS.
+  Magpie serializes its own renewal/save and rechecks token identity/deletion;
+  its metadata projection is not journal authority. Do not share the same checkpoint
+  path between independent plugin processes and claim distributed race protection.
+- Magpie chooses request accounts/background keep-alive; Pi uses its active account
+  and request-level health/failover. No gateway DB/Redis/scheduler, management UI,
+  external OpenAI/Anthropic server entry, server model redirects or background
+  quota polling is installed. Pi optional tools are not new native Magpie tools.
+- JS JSON objects are semantically compared except JSON-mode text, where raw args
+  are preserved. No Go wire-byte/TLS/HTTP2/OS proxy equivalence or live entitlement,
+  host-build, Windows hardware, crash-power-loss or reduced account-risk claim.
+- The inherited long-fence URL-reader failure is unrelated, unchanged and visible.
+  This candidate remains local awaiting independent review; no push/PR/merge.
+
+## Second local review: body cancellation / lifecycle precision
+
+Independent review of `1520951` passed its prior counterexamples but found one
+additional P2: after one frame, `reader.cancel()` queued `iterator.return()` behind
+a silent `next()` and did not cancel upstream until external abort/watchdog. The
+reviewer's independently authored native fixture reproduced false/false for
+cancel-settled/upstream-cancelled before this repair (preserved `.cache/cancel-before.log`).
+
+- `magpie.ts`: each native request now owns an AbortController linked to the
+  original signal; body.cancel first aborts it, then returns the iterator. Output
+  abort is handled even with an unread queued first chunk. Every terminal path
+  removes linked listeners; cancel does not persist failure or retry a request.
+- `consumer-sse.ts`: optional cancellation directly cancels a pending reader and
+  checks abort before yielding buffered lines. This also works when watchdogs
+  are disabled or a synthetic fetch does not itself observe its signal.
+- `consumer-fetch.ts`: the body guard releases its underlying reader on EOF,
+  network error, caller abort and downstream cancellation, after pending reads
+  settle; stale scheduled pulls cannot read an already-released reader.
+- Source counterpart remains c2a `antigravity_gemini.go:945-949`: Close closes the
+  upstream source, not an await of a future SSE event. No wire/TLS claim is made.
+- `scripts/test-native-cancel.ts` extends the independent native repro into
+  **17** body-only/initial silence/before-after downstream read/network/EOF/finish/
+  original abort/isolation/no-replay/lock/listener/health/stale-auth cases. It does
+  not call host abort RPC or external abort to make a body.cancel case pass.
+
+The pinned host has no signOut plugin callback. Its `removeAuth:1240-1245` and
+`signOut:3809-3813` only mutate host auth/cache and send outbound notifications;
+`client.auth.remove:1409-1412` is a callable operation, not a lifecycle subscription.
+No fictitious hook, host patch or credential-file watcher is installed. Thus
+native signOut leaves protected journal material retained, **not journal-revoked**.
+Actual-host tests now explicitly assert this distinction, the deleted key has no
+loader, a stale native loader without scoped auth cannot dispatch, and explicit
+fresh consent fences an older held token response. Retained checkpoint records
+are not active accounts. Pi explicit remove still has its real revoke path.
+
+Friend OS is now confirmed Windows, server Linux; directory-fsync evidence remains
+fault-injection on Linux, not a Windows device test or sole-cause/auth-success proof.
+All report dates/times use JST. These follow-ups remain local for second review.
