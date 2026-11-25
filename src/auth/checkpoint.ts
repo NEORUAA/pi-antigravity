@@ -19,9 +19,14 @@ import {
 import type { AntigravityOAuthCredentials } from "../types/types.js";
 
 type State = "baseline" | "pending" | "verified" | "permanent" | "revoked";
+export type ConsumerCooldown = {
+  status: 429 | 503;
+  kind: "quota" | "rate" | "capacity" | "unknown";
+};
 export type ConsumerHealth = {
   blockedReason?: string;
   cooldowns?: Record<string, number>;
+  cooldownReasons?: Record<string, ConsumerCooldown>;
   lastFailure?: { at: number; status: number; kind: string; model: string };
 };
 export type ConsumerLease = { family: string; epoch: string };
@@ -73,6 +78,18 @@ function validConsumerHealth(health: unknown): health is ConsumerHealth {
         Object.values(health.cooldowns).some(
           (v) => typeof v !== "number" || !Number.isFinite(v) || v < 0,
         )))
+  )
+    return false;
+  if (
+    health.cooldownReasons !== undefined &&
+    (!plain(health.cooldownReasons) ||
+      Object.values(health.cooldownReasons).some(
+        (v) =>
+          !plain(v) ||
+          (v.status !== 429 && v.status !== 503) ||
+          typeof v.kind !== "string" ||
+          !["quota", "rate", "capacity", "unknown"].includes(v.kind),
+      ))
   )
     return false;
   if (health.lastFailure !== undefined) {

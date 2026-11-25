@@ -3,6 +3,8 @@ import {
   initializeConsumerHealth,
   consumerHealth,
   updateConsumerHealth,
+  type ConsumerCooldown,
+  type ConsumerHealth,
   type ConsumerLease,
 } from "./auth/checkpoint.js";
 /** Native OpenCode/Magpie hooks. Uses Magpie's documented Gemini provider API;
@@ -10,12 +12,7 @@ import {
 import { loginAntigravity, refreshAntigravityToken, getApiKey } from "./auth/oauth.js";
 import { observeAccount } from "./auth/account-view.js";
 import { accountModelIds, accountSupportsModel } from "./compat/account-catalog.js";
-import {
-  CODEX_CATALOG,
-  resolveCodexModel,
-  codexModelBaseName,
-  type Variant,
-} from "./compat/catalog.js";
+import { CODEX_CATALOG, codexModelBaseName, type Variant } from "./compat/catalog.js";
 import { codexRequestId } from "./compat/profile.js";
 import {
   normalizeNativeGeminiRequest,
@@ -34,6 +31,10 @@ import { consumerEvents } from "./client/consumer-sse.js";
 import {
   executeCodexGeneration,
   GenerationHTTPError,
+  consumerBlockReason,
+  durationMillis,
+  quotaSignal,
+  retryAfterMillis,
   observeConsumerDocument,
   observeConsumerFailure,
   readConsumerJson,
@@ -44,7 +45,8 @@ import {
   modelQuotaFamily,
   type QuotaSnapshot,
 } from "./auth/quota-snapshot.js";
-import { safeError } from "./utils/security.js";
+import { safeError, stripValidationUrls } from "./utils/security.js";
+import { cleanText } from "./utils/text.js";
 import { isCreditsEnabled } from "./utils/credits.js";
 import { isRecord } from "./utils/util.js";
 import type { AntigravityOAuthCredentials, GeminiRequestBody } from "./types/types.js";
@@ -52,6 +54,9 @@ const ID = "antigravity";
 type ModelFamily = (typeof CODEX_CATALOG)[number];
 const modelFamilies = new Map(
   CODEX_CATALOG.filter((model) => !model.wire).map((model) => [model.id, model]),
+);
+const fixedWires = new Map(
+  CODEX_CATALOG.flatMap(({ id, wire }) => (wire ? [[id, wire] as const] : [])),
 );
 const tierId = (id: string, variant: Variant) => `${id}-${variant.level}`;
 const tierFamilies = new Map(
@@ -77,7 +82,7 @@ function magpieCatalog(quota: QuotaSnapshot) {
         wires: [...new Set(variants.map((variant) => variant.wire))],
       });
     } else if (!modelFamilies.has(id.toLowerCase())) {
-      models.set(id, { variants: [], wires: [resolveCodexModel(id)?.wire ?? id] });
+      models.set(id, { variants: [], wires: [fixedWires.get(id.toLowerCase()) ?? id] });
     }
   }
   return models;
@@ -142,16 +147,143 @@ const family = (model: string) =>
       ? "gemini:argon"
       : "gemini:shared"
     : model;
-async function recordFailure(
-  _input: Input,
-  _getAuth: GetAuth,
+
+type NativeError = { message: string; code: string | number; status?: string; details?: object[] };
+const rpcType = "type.googleapis.com/google.rpc.";
+const verificationMessage = "Google requires you to verify your account.";
+const restrictedMessage =
+  "Google Antigravity is disabled in this account for violation of Terms of Service.";
+const overloadedMessage = "The requested model is overloaded at Google Antigravity.";
+const rpcStatus = (status: number) =>
+  status === 403
+    ? "PERMISSION_DENIED"
+    : status === 429
+      ? "RESOURCE_EXHAUSTED"
+      : status === 503
+        ? "UNAVAILABLE"
+        : undefined;
+
+function redactUpstreamText(value: string, credentials?: AntigravityOAuthCredentials): string {
+  const secrets = [
+    credentials?.access,
+    credentials?.refresh,
+    credentials?.idToken,
+    credentials?.oauthClientSecret,
+  ];
+  for (const secret of secrets) if (secret) value = value.replaceAll(secret, "[redacted]");
+  const normalized = cleanText(value, value.length) ?? "";
+  return cleanText(stripValidationUrls(safeError(normalized)), 2048) ?? "";
+}
+
+function nativeUpstreamError(
+  error: GenerationHTTPError,
+  credentials?: AntigravityOAuthCredentials,
+  stream = false,
+): NativeError {
+  let source: Record<string, unknown> = {};
+  let message = "";
+  try {
+    const document: unknown = JSON.parse(error.body);
+    if (isRecord(document)) {
+      source = isRecord(document.error) ? document.error : document;
+      message =
+        typeof source.message === "string"
+          ? source.message
+          : typeof document.error === "string"
+            ? document.error
+            : "";
+    }
+  } catch {
+    if (!/^\s*[[{<]/.test(error.body)) message = error.body;
+  }
+  const block = consumerBlockReason(error.status, error.body);
+  const redact = (value: string) => redactUpstreamText(value, credentials);
+  // Normalize invisible separators before matching credential patterns.
+  message = redact(message);
+  if (
+    block === "TOS_VIOLATION" &&
+    !/disabled in this account for violation of Terms of Service/i.test(message)
+  )
+    message = message ? `${message}\n${restrictedMessage}` : restrictedMessage;
+  if (
+    block === "VALIDATION_REQUIRED" &&
+    stream &&
+    !/verify your account|account verification required/i.test(message)
+  )
+    message = message ? `${message}\n${verificationMessage}` : verificationMessage;
+  if (
+    error.status === 503 &&
+    quotaSignal(error.status, error.body)?.kind === "capacity" &&
+    !/overloaded/i.test(message)
+  )
+    message = message ? `${message}\n${overloadedMessage}` : overloadedMessage;
+  const details: object[] = [];
+  for (const entry of Array.isArray(source.details) ? source.details.slice(0, 16) : []) {
+    if (!isRecord(entry)) continue;
+    if (entry["@type"] === `${rpcType}RetryInfo`) {
+      const delay = durationMillis(entry.retryDelay);
+      if (delay !== undefined)
+        details.push({ "@type": entry["@type"], retryDelay: `${delay / 1000}s` });
+    } else if (
+      (entry["@type"] === undefined ||
+        entry["@type"] === `${rpcType}ErrorInfo` ||
+        entry["@type"] === "google.rpc.ErrorInfo") &&
+      typeof entry.reason === "string" &&
+      /^[A-Z][A-Z0-9_]{0,79}$/.test(entry.reason) &&
+      redact(entry.reason) === entry.reason
+    ) {
+      details.push({ "@type": `${rpcType}ErrorInfo`, reason: entry.reason });
+    }
+  }
+  return {
+    message:
+      message ||
+      (block === "VALIDATION_REQUIRED"
+        ? verificationMessage
+        : `Google Antigravity returned HTTP ${error.status}.`),
+    code:
+      typeof source.code === "number" ||
+      (typeof source.code === "string" &&
+        /^[A-Za-z0-9_-]{1,80}$/.test(source.code) &&
+        redact(source.code) === source.code)
+        ? source.code
+        : error.status,
+    status:
+      typeof source.status === "string" &&
+      /^[A-Z][A-Z_]{0,63}$/.test(source.status) &&
+      redact(source.status) === source.status
+        ? source.status
+        : rpcStatus(error.status),
+    ...(details.length > 0 && { details }),
+  };
+}
+
+// Only machine-readable reasons go in the credential journal and host auth data.
+// Upstream messages can contain account or request data and stay in this process.
+const recentFailures = new Map<string, { error: NativeError; until: number }>();
+const errorCacheKey = (lease: ConsumerLease, c: AntigravityOAuthCredentials, scope: string) =>
+  JSON.stringify([lease.family, lease.epoch, c.projectId, scope]);
+
+function localError(status: number, message: string, reason?: string): NativeError {
+  return {
+    code: status,
+    status: rpcStatus(status),
+    message,
+    ...(reason && { details: [{ "@type": `${rpcType}ErrorInfo`, reason }] }),
+  };
+}
+
+function recordFailure(
   c: AntigravityOAuthCredentials,
   model: string,
   error: unknown,
+  upstream: NativeError | undefined,
   lease?: ConsumerLease,
 ) {
-  if (!(error instanceof GenerationHTTPError) || !lease) return;
-  updateConsumerHealth(lease, (health) =>
+  if (!(error instanceof GenerationHTTPError) || !lease || !upstream) return;
+  const now = Date.now();
+  let quote: { key: string; until: number } | undefined;
+  const written = updateConsumerHealth(lease, (health) =>
     observeConsumerFailure(
       c.access,
       model,
@@ -159,24 +291,157 @@ async function recordFailure(
       error.body,
       error.headers,
       (_token, _model, update) => {
-        if (update.block) health.blockedReason = update.block;
+        if (update.block) {
+          health.blockedReason = update.block;
+          quote = {
+            key: errorCacheKey(lease, c, `account:${update.block}:${model}`),
+            until: now + 30 * 60_000,
+          };
+        }
         if (update.failure) health.lastFailure = update.failure;
         if (update.cooldownMs) {
           health.cooldowns ??= {};
+          health.cooldownReasons ??= {};
+          for (const [key, until] of Object.entries(health.cooldowns)) {
+            if (until > now) continue;
+            delete health.cooldowns[key];
+            delete health.cooldownReasons[key];
+          }
           const shared = model.startsWith("gemini-")
             ? family(model)
             : update.quotaModel
               ? family(update.quotaModel)
               : model;
-          for (const id of [model, ...(update.familyQuota ? [shared] : [])])
-            health.cooldowns[id] = Math.max(
-              health.cooldowns[id] ?? 0,
-              Date.now() + update.cooldownMs,
-            );
+          const until = now + update.cooldownMs;
+          const kind = update.failure?.kind;
+          const reason: ConsumerCooldown = {
+            status: error.status === 503 ? 503 : 429,
+            kind: kind === "quota" || kind === "rate" || kind === "capacity" ? kind : "unknown",
+          };
+          for (const id of new Set([model, ...(update.familyQuota ? [shared] : [])])) {
+            if (until < (health.cooldowns[id] ?? 0)) continue;
+            health.cooldowns[id] = until;
+            health.cooldownReasons[id] = reason;
+            if (id === model) quote = { key: errorCacheKey(lease, c, `model:${model}`), until };
+          }
         }
       },
     ),
   );
+  if (!written || !quote) return;
+  for (const [key, value] of recentFailures) if (value.until <= now) recentFailures.delete(key);
+  recentFailures.delete(quote.key);
+  if (recentFailures.size >= 128) recentFailures.delete(recentFailures.keys().next().value!);
+  const { details, ...summary } = upstream;
+  // A relative reset in a replay would restart Magpie's countdown.
+  const reason = summary.message
+    .replace(
+      /\b(?:(?:your )?quota will reset after|resets? (?:in|after)|try again in|retry (?:in|after))\s+\d(?:\.(?=\d)|[^.!?])*(?:[.!?]|$)/gi,
+      "",
+    )
+    .replace(/(?:请\s*)?\d+\s*(?:秒|分钟)钟?\s*(?:之?后)(?:再试|重试)?[。！]?/g, "")
+    .trim();
+  const stableDetails = details?.filter(
+    (detail) => isRecord(detail) && detail["@type"] !== `${rpcType}RetryInfo`,
+  );
+  recentFailures.set(quote.key, {
+    until: quote.until,
+    error: {
+      ...summary,
+      message: reason,
+      ...(stableDetails?.length && { details: stableDetails }),
+    },
+  });
+}
+
+function cachedFailure(
+  lease: ConsumerLease,
+  c: AntigravityOAuthCredentials,
+  scope: string,
+  now = Date.now(),
+) {
+  const entry = recentFailures.get(errorCacheKey(lease, c, scope));
+  return entry && entry.until > now && entry.error.message ? entry.error : undefined;
+}
+
+function accountBlockResponse(
+  health: ConsumerHealth,
+  lease: ConsumerLease,
+  c: AntigravityOAuthCredentials,
+  runtime: string,
+): Response | undefined {
+  if (health.blockedReason) {
+    const fallback =
+      health.blockedReason === "VALIDATION_REQUIRED"
+        ? localError(403, verificationMessage, "VALIDATION_REQUIRED")
+        : health.blockedReason === "TOS_VIOLATION"
+          ? localError(403, restrictedMessage, "TOS_VIOLATION")
+          : localError(403, "Google Antigravity access is restricted for this account.");
+    return Response.json(
+      { error: cachedFailure(lease, c, `account:${health.blockedReason}:${runtime}`) ?? fallback },
+      { status: 403 },
+    );
+  }
+  if (c.quota?.forbidden)
+    return Response.json(
+      {
+        error: localError(403, "Google Antigravity denied access to this account's quota catalog."),
+      },
+      { status: 403 },
+    );
+}
+
+function cooldownResponse(
+  health: ConsumerHealth,
+  lease: ConsumerLease,
+  c: AntigravityOAuthCredentials,
+  id: string,
+  runtime: string,
+): Response | undefined {
+  const now = Date.now();
+  const cooldowns = health.cooldowns ?? {};
+  const key = [runtime, id, family(runtime)].reduce((current, next) =>
+    (cooldowns[next] ?? 0) > (cooldowns[current] ?? 0) ? next : current,
+  );
+  const hold = cooldowns[key] ?? 0;
+  const quota = quotaGate(c.quota, runtime, now);
+  if (hold <= now && !quota.blocked) return undefined;
+  const recorded = health.cooldownReasons?.[key];
+  const legacy =
+    health.lastFailure?.model === key && [429, 503].includes(health.lastFailure.status)
+      ? health.lastFailure
+      : undefined;
+  const kind = quota.blocked ? "quota" : (recorded?.kind ?? legacy?.kind);
+  const cached =
+    key === runtime && hold > now ? cachedFailure(lease, c, `model:${runtime}`, now) : undefined;
+  const status = !quota.blocked && (recorded?.status ?? legacy?.status) === 503 ? 503 : 429;
+  const message =
+    kind === "quota"
+      ? "Individual quota reached for the requested model on this account."
+      : kind === "rate"
+        ? "Rate limit reached. Credentials for the requested model are cooling down."
+        : kind === "capacity"
+          ? overloadedMessage
+          : "Credentials for the requested model are cooling down after a Google Antigravity error.";
+  const cachedStatus = health.cooldownReasons?.[runtime]?.status;
+  const error =
+    cached && cachedStatus === status && (!quota.blocked || recorded?.kind === "quota")
+      ? cached
+      : localError(
+          status,
+          message,
+          kind === "quota"
+            ? "QUOTA_EXHAUSTED"
+            : kind === "rate"
+              ? "RATE_LIMIT_EXCEEDED"
+              : kind === "capacity"
+                ? "MODEL_CAPACITY_EXHAUSTED"
+                : undefined,
+        );
+  const until = Math.max(hold, quota.resetAt ?? 0);
+  const headers =
+    until > now ? { "retry-after": String(Math.ceil((until - now) / 1000)) } : undefined;
+  return Response.json({ error }, { status, headers });
 }
 function usageView(c: AntigravityOAuthCredentials) {
   const q = c.quota;
@@ -388,14 +653,11 @@ async function nativeFetch(
       return Response.json({ error: { message: "Gemini contents are required" } }, { status: 400 });
     const c = await observed(input, getAuth, signal);
     bound = c;
+    lease = consumerLease(c);
+    const health = consumerHealth(lease);
     const model = modelFamilies.get(id.toLowerCase());
     const variants =
       c.quota && model ? availableVariants(model, new Set(accountModelIds(c.quota))) : [];
-    if (!c.quota || (model ? !variants.length : !accountSupportsModel(c.quota, id)))
-      return Response.json(
-        { error: { message: "Model is not in this account's synchronized catalog" } },
-        { status: 404 },
-      );
     const headers = new Headers(
       init?.headers ?? (url instanceof Request ? url.headers : undefined),
     );
@@ -405,6 +667,14 @@ async function nativeFetch(
     const variant =
       variants.find((tier) => tier.level === (effort || model?.defaultLevel)) ??
       (effort ? undefined : variants[0]);
+    const wire = variant?.wire ?? fixedWires.get(id.toLowerCase()) ?? id;
+    const blocked = accountBlockResponse(health, lease, c, wire);
+    if (blocked) return blocked;
+    if (!c.quota || (model ? !variants.length : !accountSupportsModel(c.quota, id)))
+      return Response.json(
+        { error: { message: "Model is not in this account's synchronized catalog" } },
+        { status: 404 },
+      );
     if (effort && !variant) {
       const supported = variants.map(({ level }) => `'${level}'`).join(", ");
       return Response.json(
@@ -417,43 +687,27 @@ async function nativeFetch(
         { status: 400 },
       );
     }
-    const runtime = variant?.wire ?? resolveCodexModel(id)?.wire ?? id;
-    if (quotaGate(c.quota, runtime).blocked)
-      return Response.json({ error: { message: "Model quota unavailable" } }, { status: 429 });
-    lease = consumerLease(c);
-    const health = consumerHealth(lease);
-    if (
-      health.blockedReason ||
-      Math.max(
-        health.cooldowns?.[id] ?? 0,
-        health.cooldowns?.[runtime] ?? 0,
-        health.cooldowns?.[family(runtime)] ?? 0,
-      ) > Date.now()
-    )
-      return Response.json(
-        { error: { message: "Account blocked or model quota cooling down" } },
-        { status: health.blockedReason ? 403 : 429 },
-      );
+    const held = cooldownResponse(health, lease, c, id, wire);
+    if (held) return held;
     const request = structuredClone(raw) as unknown as GeminiRequestBody;
     const requestModel = model && variant ? tierId(model.id, variant) : id;
-    const names = normalizeNativeGeminiRequest(request, requestModel, runtime, Boolean(variant));
-    if (runtime !== id && match[2] !== "countTokens")
-      responseHeaders.set("x-magpie-sent-model", runtime);
-    selected = runtime;
-    jsonModeRequested = claudeJSONMode(request, runtime);
+    const names = normalizeNativeGeminiRequest(request, requestModel, wire, Boolean(variant));
+    if (wire !== id && match[2] !== "countTokens") responseHeaders.set("x-magpie-sent-model", wire);
+    selected = wire;
+    jsonModeRequested = claudeJSONMode(request, wire);
     const response = await executeCodexGeneration({
       accountPolicy: "caller",
       credentials: parseApiKey(getApiKey(c)),
-      model: runtime,
+      model: wire,
       signal,
       send: consumerFetch,
       method: match[2] as "generateContent" | "streamGenerateContent" | "countTokens",
       build: (project) =>
         match[2] === "countTokens"
-          ? nativeCountTokensRequest(request, runtime)
+          ? nativeCountTokensRequest(request, wire)
           : {
               project,
-              model: runtime,
+              model: wire,
               request,
               requestType: "agent",
               userAgent: "antigravity",
@@ -468,7 +722,7 @@ async function nativeFetch(
       if (jsonMode) rewriteJSONModeFrame(d, jsonModeState);
       let payload = d;
       for (;;) {
-        observeConsumerDocument(c.access, runtime, payload, false);
+        observeConsumerDocument(c.access, wire, payload, false);
         if (!isRecord(payload.response)) break;
         payload = payload.response;
       }
@@ -477,7 +731,7 @@ async function nativeFetch(
     };
     if (match[2] === "countTokens") {
       const document = await readConsumerJson(response, 1024 * 1024);
-      observeConsumerDocument(c.access, runtime, document, false);
+      observeConsumerDocument(c.access, wire, document, false);
       return Response.json(unwrapNativeCountTokens(document), { headers: responseHeaders });
     }
     if (match[2] === "generateContent")
@@ -550,8 +804,21 @@ async function nativeFetch(
             done = true;
             cleanup();
             await iterator.return(undefined).catch(() => {});
-            if (!signal.aborted) await recordFailure(input, getAuth, c, runtime, e, lease);
-            controller.error(new Error(safeError(e)));
+            if (signal.aborted) {
+              controller.error(signal.reason);
+            } else if (e instanceof GenerationHTTPError) {
+              const error = nativeUpstreamError(e, c, true);
+              recordFailure(c, wire, e, error, lease);
+              // The stream head is already committed. Magpie reads an HTTP code from the error frame.
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({ error: { ...error, code: e.status } })}\n\n`,
+                ),
+              );
+              controller.close();
+            } else {
+              controller.error(new Error(safeError(e)));
+            }
           }
         },
         async cancel(reason) {
@@ -567,19 +834,28 @@ async function nativeFetch(
     );
   } catch (error) {
     if (signal?.aborted) throw signal.reason ?? error;
-    if (bound) await recordFailure(input, getAuth, bound, selected, error, lease);
+    const upstream =
+      error instanceof GenerationHTTPError ? nativeUpstreamError(error, bound) : undefined;
+    if (bound) recordFailure(bound, selected, error, upstream, lease);
     if (jsonModeRequested && error instanceof GenerationHTTPError && error.status === 400) {
       const rejection = nativeJSONModeRejection(error.body, selectedPublic);
       if (rejection)
         return Response.json(
-          { error: { ...rejection, message: safeError(new Error(String(rejection.message))) } },
+          {
+            error: { ...rejection, message: redactUpstreamText(String(rejection.message), bound) },
+          },
           { status: 400, headers: responseHeaders },
         );
     }
-    const status = error instanceof GenerationHTTPError ? error.status : 502;
+    if (error instanceof GenerationHTTPError && upstream) {
+      const delay = retryAfterMillis(error.headers) ?? quotaSignal(error.status, error.body)?.delay;
+      if (delay && delay > 0) responseHeaders.set("retry-after", String(Math.ceil(delay / 1000)));
+      const status = error.status >= 400 && error.status <= 599 ? error.status : 502;
+      return Response.json({ error: upstream }, { status, headers: responseHeaders });
+    }
     return Response.json(
       { error: { message: safeError(error) } },
-      { status: status >= 400 && status <= 599 ? status : 502, headers: responseHeaders },
+      { status: 502, headers: responseHeaders },
     );
   } finally {
     if (!handedOff) cleanup();

@@ -157,6 +157,49 @@ export class GenerationHTTPError extends Error {
     this.headers = headers;
   }
 }
+export function retryAfterMillis(headers?: Headers): number | undefined {
+  const value = headers?.get("retry-after")?.trim();
+  if (!value) return undefined;
+  const delay = /^\d+$/.test(value) ? Number(value) * 1000 : Date.parse(value) - Date.now();
+  return Number.isFinite(delay) && delay > 0 ? delay : undefined;
+}
+
+export function consumerBlockReason(status: number, body: string): string | undefined {
+  if (status !== 403) return undefined;
+  let message = body;
+  try {
+    const document: unknown = JSON.parse(body);
+    if (!isRecord(document)) return undefined;
+    const error = isRecord(document.error) ? document.error : document;
+    message =
+      typeof error.message === "string"
+        ? error.message
+        : typeof document.error === "string"
+          ? document.error
+          : "";
+    for (const detail of Array.isArray(error.details) ? error.details : []) {
+      if (!isRecord(detail)) continue;
+      if (
+        detail["@type"] !== undefined &&
+        detail["@type"] !== "type.googleapis.com/google.rpc.ErrorInfo" &&
+        detail["@type"] !== "google.rpc.ErrorInfo"
+      )
+        continue;
+      if (detail.reason === "VALIDATION_REQUIRED" || detail.reason === "TOS_VIOLATION")
+        return detail.reason;
+    }
+  } catch {
+    if (/^\s*[{[]/.test(body)) return undefined;
+  }
+  const text = message.trim();
+  if (text === "VALIDATION_REQUIRED" || text === "TOS_VIOLATION") return text;
+  if (
+    /^This service has been disabled in this account for violation of Terms of Service\b/i.test(
+      text,
+    )
+  )
+    return "TOS_VIOLATION";
+}
 export async function boundedErrorBody(response: Response): Promise<string> {
   if (!response.body) return "";
   const reader = response.body.getReader();
@@ -330,7 +373,7 @@ export function observeConsumerFailure(
   write: typeof markAccountHealth = markAccountHealth,
 ): void {
   const quota = quotaSignal(status, body);
-  const block = status === 403 ? /VALIDATION_REQUIRED|TOS_VIOLATION/.exec(body)?.[0] : undefined;
+  const block = consumerBlockReason(status, body);
   const failure = {
     at: Date.now(),
     status,
@@ -351,11 +394,7 @@ export function observeConsumerFailure(
           : quota?.reason
             ? 30_000
             : 5000;
-  if (quota?.delay === undefined && headers?.has("retry-after")) {
-    const raw = headers.get("retry-after")!;
-    const value = /^\d+$/.test(raw.trim()) ? Number(raw) * 1000 : Date.parse(raw) - Date.now();
-    if (Number.isFinite(value) && value > 0) cooldown = value;
-  }
+  if (quota?.delay === undefined) cooldown = retryAfterMillis(headers) ?? cooldown;
   write(token, model, {
     failure,
     block,

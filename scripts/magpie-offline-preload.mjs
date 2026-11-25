@@ -38,14 +38,33 @@ globalThis.fetch=async(input,init={})=>{
  event.response.cpaUsageMetadata={promptTokenCount:11,candidatesTokenCount:7,totalTokenCount:18};
  if(scenario.includes("fixture-partial"))delete event.response.candidates[0].finishReason;
  if(scenario.includes("fixture-prompt-safety")){delete event.response.candidates;event.response.promptFeedback={blockReason:"SAFETY"};}
- const failure={error:{code:429,status:"RESOURCE_EXHAUSTED",message:"quota exhausted"}};
+ const failure = {error: {
+  code: 429,
+  status: "RESOURCE_EXHAUSTED",
+  message: "Gemini model quota exhausted for this subscription (Bearer\u0000fixture-secret-1234). Your quota will reset after 120s.",
+  details: [{"@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: "120s"}],
+ }};
 
  if(scenario.includes("fixture-json-reject"))return json({error:{message:JSON.stringify({error:{message:'tool_choice: forced tool not supported'}})}},400);
+ if(scenario.includes("fixture-validation-required"))return json({error: {
+  code: 403,
+  status: "PERMISSION_DENIED",
+  message: "Verify your Google account before continuing.",
+  details: [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", reason: "VALIDATION_REQUIRED", metadata: {validation_url: "https://accounts.google.com/verify?token=fixture-verification-url"}}],
+ }},403);
+ if(scenario.includes("fixture-tos-violation"))return json({error: {
+  code: 403,
+  status: "PERMISSION_DENIED",
+  message: "This service has been disabled in this account for violation of Terms of Service. Please submit an appeal to continue using this product.",
+ }},403);
  if(scenario.includes("fixture-json-mode")){const raw='{"response":{"candidates":[{"content":{"parts":[{"text":"not JSON"},{"text":"reason","thought":true},{"functionCall":{"name":"json_mode","args":{"10":1.00,"2":1e3}}}]}}]}}';const finish={response:{candidates:[{finishReason:"OTHER"}]}};if(method==="generateContent")return new Response(raw,{headers:{"content-type":"application/json"}});return new Response('data: '+raw+'\n\n'+'data: '+JSON.stringify(finish)+'\n\n',{headers:{"content-type":"text/event-stream"}});}
  if(method==="generateContent")return json(event);
  const frame=x=>'data: '+JSON.stringify(x)+'\n\n';
  if(scenario.includes("fixture-before-error"))return new Response(frame(failure),{headers:{"content-type":"text/event-stream"}});
- if(scenario.includes("fixture-after-error"))return new Response(frame(event)+frame(failure),{headers:{"content-type":"text/event-stream"}});
+ if(scenario.includes("fixture-after-error")){
+  delete event.response.candidates[0].finishReason;
+  return new Response(frame(event)+frame(failure),{headers:{"content-type":"text/event-stream"}});
+ }
  if(scenario.includes("fixture-hang")) {
   let clean=()=>{};
   return new Response(new ReadableStream({start(c){c.enqueue(new TextEncoder().encode(frame(event)));const abort=()=>{try{c.error(new DOMException("Aborted","AbortError"));}catch{};fs.appendFileSync(process.env.MAGPIE_FIXTURE_CALLS,JSON.stringify({tag:t,method:"fixture-aborted"})+"\n");clean();};clean=()=>init.signal?.removeEventListener("abort",abort);init.signal?.addEventListener("abort",abort,{once:true});},cancel(){clean();}}),{headers:{"content-type":"text/event-stream"}});

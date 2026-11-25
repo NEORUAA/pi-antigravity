@@ -13,7 +13,7 @@ const { streamAntigravity, buildRequest } = await import("../src/stream/stream.j
 const { ANTIGRAVITY_MODELS } = await import("../src/models/models.js");
 const { CODEX_CATALOG } = await import("../src/compat/catalog.js");
 const { consumerEvents } = await import("../src/client/consumer-sse.js");
-const { observeConsumerFailure, quotaSignal, durationMillis } = await import("../src/client/codex-transport.js");
+const { consumerBlockReason, observeConsumerFailure, quotaSignal, durationMillis } = await import("../src/client/codex-transport.js");
 const { piToolSchema } = await import("../src/compat/schema.js");
 const { codexSessionId } = await import("../src/compat/profile.js");
 const { executeAntigravitySearch } = await import("../src/search/search.js");
@@ -28,6 +28,8 @@ function fresh() { process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), 
 function account(token = "fixture-a", email = "a@example.invalid", projectId = "project-a") { rememberAccount({ access: token, refresh: `refresh-${token}`, expires: Date.now() + 3_600_000, email, projectId }); }
 function json(value: unknown, status = 200) { return new Response(JSON.stringify(value), { status }); }
 function errorBody(code: number, reason?: string) { return { error: { code, status: code === 429 ? "RESOURCE_EXHAUSTED" : "PERMISSION_DENIED", message: "Synthetic upstream failure", details: reason ? [{ "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason }] : [] } }; }
+assert.equal(consumerBlockReason(403, JSON.stringify(errorBody(403, "VALIDATION_REQUIRED"))), "VALIDATION_REQUIRED");
+assert.equal(consumerBlockReason(403, JSON.stringify({error: {message: "Permission denied", metadata: {label: "TOS_VIOLATION"}}})), undefined);
 function sse(documents: unknown[]) { return new Response(documents.map((document) => `data: ${JSON.stringify(document)}\n\n`).join("")); }
 const delta = { response: { candidates: [{ content: { parts: [{ text: "already emitted" }] } }] } };
 try {
